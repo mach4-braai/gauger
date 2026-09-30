@@ -30,6 +30,11 @@ type Uploader interface {
 // node has joined, and returns the uploader to use.
 type Connect func(ctx context.Context) (Uploader, error)
 
+// FinalAttempts is how many drain attempts the post step gets before the
+// rest goes to the fallback artifact, so a dead server costs about 3 s, not
+// the whole final budget.
+const FinalAttempts = 3
+
 // Config sets the loop's timing.
 type Config struct {
 	SampleEvery time.Duration
@@ -161,7 +166,7 @@ func (a *Agent) send(ctx, drainCtx context.Context, started time.Time, kick, fin
 	r.joined = true
 	a.Log.Printf("connected to gauger-server")
 
-	finalPhase := false
+	finalPhase, finalTries := false, 0
 	for {
 		if !r.startSent {
 			switch err := up.Start(drainCtx, upload.NewLifecycle(a.Config.Attrs, started)); {
@@ -177,8 +182,11 @@ func (a *Agent) send(ctx, drainCtx context.Context, started time.Time, kick, fin
 			}
 		}
 		drained := a.drain(drainCtx, up, &r)
+		if finalPhase {
+			finalTries++
+		}
 
-		if finalPhase && (drained || drainCtx.Err() != nil) {
+		if finalPhase && (drained || finalTries >= FinalAttempts || drainCtx.Err() != nil) {
 			unsent, dropped := a.Spool.Len(), a.Spool.Dropped()
 			done := upload.NewLifecycle(a.Config.Attrs, time.Now())
 			done.UnsentBatches, done.DroppedBatches = &unsent, &dropped
