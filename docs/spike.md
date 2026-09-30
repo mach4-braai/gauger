@@ -14,9 +14,9 @@ The OIDC token also carries a `check_run_id` claim with the same value, so gauge
 
 ## 3. Does `ACTIONS_ID_TOKEN_REQUEST_TOKEN` still work late in a long job?
 
-A process started at the beginning of the job and holding the request token from its environment fetched an OIDC token at +0 s, +420 s and +1500 s on both images. Each OIDC token had `exp - iat = 300` s.
+Yes, for the whole job. A process started at the beginning of the job, holding the request token from its start environment, fetched OIDC tokens at +0 s, +420 s and +1500 s on both images. In a longer [run 36749674577](https://github.com/mach4-braai/gauger/actions/runs/36749674577) it also fetched at +2940 s and +3300 s. Each OIDC token had `exp - iat = 300` s.
 
-The request token itself is a JWT with `exp - iat = 3000` s, and gauger's binary keeps the copy from its start environment. Whether a fetch still works past 50 minutes is not measured yet: the 75-minute run for it was cancelled to stay inside the free usage limits. If it does not, a job longer than about 50 minutes keeps sampling but can no longer upload, and the rest reaches gauger-server only through the fallback artifact.
+The request token is a JWT whose lifetime follows the job's `timeout-minutes` plus 10 minutes: 3000 s for a 40-minute timeout, and 5100 s for a 75-minute one. A step that started 55 minutes in got the same token, not a new one. The copy gauger keeps from its start environment therefore stays valid until after the job's own timeout.
 
 ## 4. How long does the tsnet join take, and how big is the binary?
 
