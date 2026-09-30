@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 
 // Tag is the ACL tag the federated identity grants to gauger nodes.
 const Tag = "tag:gauger-ci"
+
+// KeyAttributes is appended to a client ID without its own, so the minted
+// auth key makes an ephemeral, preauthorized node.
+const KeyAttributes = "?ephemeral=true&preauthorized=true"
 
 // Config is the node's settings. ClientID and Audience are the infra outputs
 // gauger_ci_client_id and gauger_ci_audience.
@@ -86,12 +91,16 @@ func (n *Node) server() *tsnet.Server {
 	if n.cfg.Verbose {
 		logf = n.cfg.Log.Printf
 	}
+	clientID := n.cfg.ClientID
+	if clientID != "" && !strings.Contains(clientID, "?") {
+		clientID += KeyAttributes
+	}
 	return &tsnet.Server{
 		Dir:           n.cfg.Dir,
 		Hostname:      n.cfg.Hostname,
 		Ephemeral:     true,
 		AdvertiseTags: []string{Tag},
-		ClientID:      n.cfg.ClientID,
+		ClientID:      clientID,
 		Audience:      n.cfg.Audience,
 		Logf:          logf,
 		UserLogf:      n.cfg.Log.Printf,
