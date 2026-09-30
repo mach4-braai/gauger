@@ -1,18 +1,15 @@
 // Package metrics turns /proc samples into OTLP metrics tagged with the job's identity.
 package metrics
 
-import "strings"
-
 // Identity attribute keys, shared with gauger-server. docs/contract.md lists them.
 const (
-	KeyRunID      = "cicd.pipeline.run.id"
+	KeyRunID      = "github.run_id"
 	KeyRunAttempt = "github.run_attempt"
-	KeyCheckRunID = "cicd.pipeline.task.run.id"
-	KeyOwner      = "vcs.owner.name"
-	KeyRepository = "vcs.repository.name"
-	KeyWorkflow   = "cicd.pipeline.name"
-	KeyJob        = "cicd.pipeline.task.name"
-	KeyRunnerName = "cicd.worker.name"
+	KeyCheckRunID = "github.check_run_id"
+	KeyRepository = "github.repository"
+	KeyWorkflow   = "github.workflow"
+	KeyJob        = "github.job"
+	KeyRunnerName = "runner.name"
 	KeyScope      = "gauger.metrics.scope"
 )
 
@@ -49,13 +46,11 @@ func IdentityFromEnv(getenv func(string) string, checkRunID string) Identity {
 // Attributes returns the identity as OTel attributes. Empty values are left
 // out, so a job without a check run ID is matched on its runner name.
 func (id Identity) Attributes() []Attribute {
-	owner, repo, _ := strings.Cut(id.Repository, "/")
 	all := []Attribute{
 		{KeyRunID, id.RunID},
 		{KeyRunAttempt, id.RunAttempt},
 		{KeyCheckRunID, id.CheckRunID},
-		{KeyOwner, owner},
-		{KeyRepository, repo},
+		{KeyRepository, id.Repository},
 		{KeyWorkflow, id.Workflow},
 		{KeyJob, id.Job},
 		{KeyRunnerName, id.RunnerName},

@@ -47,14 +47,16 @@ func (e *StatusError) Permanent() bool {
 	return e.Code >= 400 && e.Code < 500
 }
 
-// Lifecycle is the JSON body of /v1/jobs/start and /v1/jobs/done.
+// Lifecycle is the body of /v1/jobs/start and /v1/jobs/done. It marshals to
+// one flat JSON object: the identity attributes, "time", and on done the
+// batch counts.
 type Lifecycle struct {
-	Attributes map[string]string `json:"attributes"`
-	Time       time.Time         `json:"time"`
+	Attributes map[string]string
+	Time       time.Time
 	// UnsentBatches and DroppedBatches are set on done. A non-zero
 	// UnsentBatches means the rest is in the fallback artifact.
-	UnsentBatches  *int `json:"unsent_batches,omitempty"`
-	DroppedBatches *int `json:"dropped_batches,omitempty"`
+	UnsentBatches  *int
+	DroppedBatches *int
 }
 
 // NewLifecycle returns a lifecycle body for the identity attributes.
@@ -64,6 +66,21 @@ func NewLifecycle(attrs []metrics.Attribute, t time.Time) Lifecycle {
 		m[a.Key] = a.Value
 	}
 	return Lifecycle{Attributes: m, Time: t.UTC()}
+}
+
+func (l Lifecycle) MarshalJSON() ([]byte, error) {
+	body := make(map[string]any, len(l.Attributes)+3)
+	for k, v := range l.Attributes {
+		body[k] = v
+	}
+	body["time"] = l.Time.Format(time.RFC3339Nano)
+	if l.UnsentBatches != nil {
+		body["unsent_batches"] = *l.UnsentBatches
+	}
+	if l.DroppedBatches != nil {
+		body["dropped_batches"] = *l.DroppedBatches
+	}
+	return json.Marshal(body)
 }
 
 // Start posts /v1/jobs/start.

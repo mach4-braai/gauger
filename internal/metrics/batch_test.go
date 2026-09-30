@@ -78,7 +78,7 @@ func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 	attrs, ms := decode(t, data)
 
 	for k, v := range map[string]string{
-		KeyRunID: "11", KeyRunAttempt: "2", KeyOwner: "mach4-braai", KeyRepository: "gauger",
+		KeyRunID: "11", KeyRunAttempt: "2", KeyRepository: "mach4-braai/gauger",
 		KeyWorkflow: "CI", KeyJob: "build", KeyRunnerName: "GitHub Actions 7", KeyScope: "runner",
 		"service.name": "gauger", "service.version": "v1.2.3",
 	} {

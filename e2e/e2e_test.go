@@ -42,11 +42,8 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-type lifecycle struct {
-	Attributes    map[string]string `json:"attributes"`
-	Time          time.Time         `json:"time"`
-	UnsentBatches *int              `json:"unsent_batches"`
-}
+// lifecycle is the flat JSON body gauger-server decodes into a map.
+type lifecycle map[string]any
 
 type fakeServer struct {
 	*httptest.Server
@@ -219,21 +216,27 @@ func TestStreamsAndFlushesOnSIGTERM(t *testing.T) {
 	if len(f.starts) != 1 || len(f.dones) != 1 {
 		t.Fatalf("got %d starts and %d dones, want 1 each", len(f.starts), len(f.dones))
 	}
-	if got := f.dones[0].Attributes["cicd.pipeline.task.run.id"]; got != "4242" {
-		t.Fatalf("done check run ID = %q", got)
+	if got := f.dones[0]["github.check_run_id"]; got != "4242" {
+		t.Fatalf("done check run ID = %v", got)
+	}
+	if got := f.dones[0]["unsent_batches"]; got != float64(0) {
+		t.Fatalf("done unsent_batches = %v, want 0", got)
+	}
+	started, ok := f.starts[0]["time"].(string)
+	if _, err := time.Parse(time.RFC3339Nano, started); !ok || err != nil {
+		t.Fatalf("start time = %v, want RFC 3339", f.starts[0]["time"])
 	}
 	if len(f.batches) != s.SentBatches {
 		t.Fatalf("server got %d batches, status says %d", len(f.batches), s.SentBatches)
 	}
 	want := map[string]string{
-		"cicd.pipeline.run.id":      "777",
-		"github.run_attempt":        "1",
-		"cicd.pipeline.task.run.id": "4242",
-		"vcs.owner.name":            "mach4-braai",
-		"vcs.repository.name":       "gauger",
-		"cicd.pipeline.name":        "CI",
-		"cicd.pipeline.task.name":   "e2e",
-		"cicd.worker.name":          "GitHub Actions 1",
+		"github.run_id":       "777",
+		"github.run_attempt":  "1",
+		"github.check_run_id": "4242",
+		"github.repository":   "mach4-braai/gauger",
+		"github.workflow":     "CI",
+		"github.job":          "e2e",
+		"runner.name":         "GitHub Actions 1",
 	}
 	names := map[string]bool{}
 	for _, b := range f.batches {
@@ -282,7 +285,7 @@ func TestKilledServerLeavesTheFallbackBatches(t *testing.T) {
 		if err := proto.Unmarshal(data, &req); err != nil {
 			t.Fatalf("%s is not an OTLP request: %v", file, err)
 		}
-		if got := resourceAttrs(&req)["cicd.pipeline.task.run.id"]; got != "4242" {
+		if got := resourceAttrs(&req)["github.check_run_id"]; got != "4242" {
 			t.Fatalf("%s check run ID = %q", file, got)
 		}
 	}
