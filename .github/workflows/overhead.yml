@@ -1,6 +1,9 @@
 name: Overhead
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/overhead.yml
   workflow_dispatch:
 
 permissions:

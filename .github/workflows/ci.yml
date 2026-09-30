@@ -4,7 +4,6 @@ on:
   push:
     branches: [master]
   pull_request:
-  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -65,11 +64,9 @@ jobs:
           git diff --exit-code -- dist/
 
   # Joins the real tailnet with an unknown server name, so every batch ends up
-  # in the fallback artifact that the next job checks. Manual only, because each
-  # leg spends Tailscale ephemeral-node minutes.
+  # in the fallback artifact that the next job checks.
   action-e2e:
     name: action e2e (${{ matrix.os }})
-    if: github.event_name == 'workflow_dispatch'
     needs: [action]
     strategy:
       fail-fast: false

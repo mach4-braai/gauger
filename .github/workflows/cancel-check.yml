@@ -3,6 +3,9 @@ name: Cancel check
 # The run cancels itself while gauger is sampling, then checks that the post
 # step still flushed. It always ends as cancelled.
 on:
+  pull_request:
+    paths:
+      - .github/workflows/cancel-check.yml
   workflow_dispatch:
 
 permissions:
