@@ -122,6 +122,7 @@ func TestBatchesWaitForALateJoin(t *testing.T) {
 func TestUnreachableServerLeavesBatchesForTheArtifact(t *testing.T) {
 	srv := &fakeServer{metricErr: errors.New("connection refused")}
 	a := newAgent(t, func(context.Context) (Uploader, error) { return srv, nil })
+	a.Config.FinalBudget = 20 * time.Second
 	r, over := runFor(a, 100*time.Millisecond)
 
 	if r.UnsentBatches == 0 || r.UnsentBatches != a.Spool.Len() {
@@ -133,8 +134,8 @@ func TestUnreachableServerLeavesBatchesForTheArtifact(t *testing.T) {
 	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0], "fallback artifact") {
 		t.Fatalf("warnings = %q", r.Warnings)
 	}
-	if over > a.Config.FinalBudget+100*time.Millisecond {
-		t.Fatalf("stopping took %s past the signal, budget is %s", over, a.Config.FinalBudget)
+	if over > time.Duration(FinalAttempts)*time.Second {
+		t.Fatalf("stopping took %s past the signal; a dead server should cost about %d attempts, not the %s budget", over, FinalAttempts, a.Config.FinalBudget)
 	}
 }
 
