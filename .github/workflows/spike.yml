@@ -103,3 +103,38 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
             --jq ".jobs[] | select(.runner_name == \"$RUNNER_NAME\")" >"$RUNNER_TEMP/job.json"
           python3 .github/spike/report.py "$RUNNER_TEMP/proctrace.jsonl" "$RUNNER_TEMP/job.json" "$SHORT_LIVED" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The request token lasts 3000 s. This job runs past that to see whether a
+  # process started early can still fetch, and whether later steps get a new one.
+  long-job-token:
+    name: long job token
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start the late OIDC fetcher
+        run: setsid nohup python3 .github/spike/oidc.py 0 2940 3300 >"$RUNNER_TEMP/oidc.log" 2>&1 &
+
+      - name: Wait for the late OIDC fetches
+        run: |
+          timeout 3600 bash -c "until grep -q '^+3300' \"\$RUNNER_TEMP/oidc.log\"; do sleep 30; done"
+          cat "$RUNNER_TEMP/oidc.log"
+
+      - name: Fetch from a step that starts after the first token expired
+        run: |
+          {
+            echo "### Long job: OIDC tokens"
+            echo
+            echo '```'
+            echo "background process started at the beginning of the job:"
+            cat "$RUNNER_TEMP/oidc.log"
+            echo "this step, started after 55 minutes:"
+            python3 .github/spike/oidc.py 0
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
