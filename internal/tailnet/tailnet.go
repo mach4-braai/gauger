@@ -39,8 +39,10 @@ type Config struct {
 
 // Node joins in the background. Wait returns once it has joined.
 type Node struct {
-	cfg  Config
-	done chan struct{}
+	cfg      Config
+	done     chan struct{}
+	noRetry  chan struct{}
+	stopOnce sync.Once
 
 	mu     sync.Mutex
 	srv    *tsnet.Server
@@ -49,11 +51,17 @@ type Node struct {
 }
 
 // Join starts joining and returns at once. It retries with backoff until
-// ctx is cancelled.
+// ctx is cancelled or StopRetrying is called.
 func Join(ctx context.Context, cfg Config) *Node {
-	n := &Node{cfg: cfg, done: make(chan struct{})}
+	n := &Node{cfg: cfg, done: make(chan struct{}), noRetry: make(chan struct{})}
 	go n.run(ctx)
 	return n
+}
+
+// StopRetrying lets the attempt in progress finish but starts no new one, so
+// that a node that keeps failing does not hold up the post step.
+func (n *Node) StopRetrying() {
+	n.stopOnce.Do(func() { close(n.noRetry) })
 }
 
 func (n *Node) run(ctx context.Context) {
@@ -79,6 +87,8 @@ func (n *Node) run(ctx context.Context) {
 		n.cfg.Log.Printf("join attempt %d: %v", attempt, err)
 		select {
 		case <-ctx.Done():
+			return
+		case <-n.noRetry:
 			return
 		case <-time.After(backoff):
 		}

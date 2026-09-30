@@ -129,6 +129,10 @@ func run(o options, logger *log.Logger) Status {
 			Log:       logger,
 			Verbose:   o.verbose,
 		})
+		go func() {
+			<-ctx.Done()
+			node.StopRetrying()
+		}()
 		connect = func(ctx context.Context) (agent.Uploader, error) {
 			hc, err := node.Wait(ctx)
 			if err != nil {
