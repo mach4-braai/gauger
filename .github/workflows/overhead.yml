@@ -1,0 +1,59 @@
+name: Overhead
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/overhead.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    name: ${{ matrix.mode }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+        mode: [baseline, gauger]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release
+
+      - name: Run gauger
+        if: matrix.mode == 'gauger'
+        uses: ./
+        with:
+          server: http://gauger-server-absent:4318
+
+      - name: Build gauger from scratch three times
+        run: |
+          set -eu
+          for _ in 1 2 3; do
+            /usr/bin/time -f "%e %U %S" -a -o "$RUNNER_TEMP/times" go build -a -o /dev/null ./cmd/gauger
+          done
+          {
+            echo "### ${{ matrix.mode }} on ${{ matrix.os }}, $(nproc) CPUs"
+            echo
+            echo "| run | wall s | user s | sys s |"
+            echo "|---|---|---|---|"
+            awk '{ printf "| %d | %s | %s | %s |\n", NR, $1, $2, $3 }' "$RUNNER_TEMP/times"
+            echo
+            pid=$(pgrep -f '^/.*/gauger -state-dir' || true)
+            if [ -n "$pid" ]; then
+              ticks=$(getconf CLK_TCK)
+              awk -v t="$ticks" '{ printf "gauger CPU so far: %.2f s user, %.2f s sys\n\n", $14 / t, $15 / t }' "/proc/$pid/stat"
+              echo "gauger peak RSS: $(awk '/VmHWM/ { print $2, $3 }' "/proc/$pid/status")"
+              echo
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

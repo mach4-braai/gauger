@@ -43,3 +43,73 @@ jobs:
         run: |
           mise run build
           echo "gauger binary: $(stat -c %s bin/gauger) bytes on $(uname -m)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  action:
+    name: action
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Check that dist/ matches the sources
+        run: |
+          npm run build
+          git diff --exit-code -- dist/
+
+  # Joins the real tailnet with an unknown server name, so every batch ends up
+  # in the fallback artifact that the next job checks.
+  action-e2e:
+    name: action e2e (${{ matrix.os }})
+    needs: [action]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release
+
+      - uses: ./
+        with:
+          server: http://gauger-server-absent:4318
+
+      - name: Stand in for the job's own steps
+        run: sleep 20
+
+  fallback-artifact:
+    name: fallback artifact
+    needs: [action-e2e]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gauger-*
+          path: fallback
+
+      - name: Check one artifact per job, each with batches
+        run: |
+          set -eu
+          ls -R fallback
+          test "$(find fallback -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 2
+          for dir in fallback/*/; do
+            test "$(find "$dir" -name '*.pb' -size +0 | wc -l)" -gt 0
+          done

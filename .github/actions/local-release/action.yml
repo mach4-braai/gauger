@@ -1,0 +1,31 @@
+name: Local gauger release
+description: "Builds gauger from this checkout, serves it on 127.0.0.1 and pins it in dist/manifest.json, so that `uses: ./` runs this commit's binary."
+runs:
+  using: composite
+  steps:
+    - name: Cache the Go modules and the compiler output
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
+
+    - name: Build, serve and pin the binary
+      shell: bash
+      run: |
+        set -eu
+        mise run build
+        served="$RUNNER_TEMP/local-release"
+        mkdir -p "$served"
+        cp bin/gauger "$served/gauger"
+        case "$(uname -m)" in
+          x86_64) key=linux-x64 ;;
+          aarch64) key=linux-arm64 ;;
+        esac
+        jq -n --arg key "$key" --arg sum "$(sha256sum bin/gauger | cut -d' ' -f1)" \
+          '{version: "local", assets: {($key): {url: "http://127.0.0.1:8765/gauger", sha256: $sum}}}' >dist/manifest.json
+        setsid nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$served" >/dev/null 2>&1 &
+        for _ in $(seq 50); do curl -fsI http://127.0.0.1:8765/gauger >/dev/null && exit 0; sleep 0.1; done
+        echo "::error::the local release server did not start"
+        exit 1

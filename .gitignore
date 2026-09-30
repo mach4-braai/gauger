@@ -2,3 +2,5 @@
 Thumbs.db
 *.swp
 /bin/
+/node_modules/
+/dist/manifest.json

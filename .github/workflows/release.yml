@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, such as v1.2.3
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    if: github.ref == 'refs/heads/master'
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check the version
+        run: |
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must look like v1.2.3, got $VERSION"
+            exit 1
+          fi
+
+      # The release commit and both tags are pushed with this checkout's token.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+        with:
+          cache: false
+
+      - name: Check that dist/ matches the sources
+        run: |
+          npm ci
+          npm run build
+          git diff --exit-code -- dist/
+
+      - name: Build the binaries
+        run: |
+          mkdir -p out
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
+              -ldflags "-s -w -X main.version=$VERSION" \
+              -o "out/gauger-linux-$arch" ./cmd/gauger
+          done
+          (cd out && sha256sum gauger-linux-* >checksums.txt && cat checksums.txt)
+
+      - name: Pin the binaries in dist/manifest.json
+        env:
+          BASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ inputs.version }}
+        run: |
+          sum() { awk -v f="$1" '$2 == f { print $1 }' out/checksums.txt; }
+          jq -n --arg version "$VERSION" --arg base "$BASE_URL" \
+            --arg x64 "$(sum gauger-linux-amd64)" --arg arm64 "$(sum gauger-linux-arm64)" '{
+              version: $version,
+              assets: {
+                "linux-x64": { url: "\($base)/gauger-linux-amd64", sha256: $x64 },
+                "linux-arm64": { url: "\($base)/gauger-linux-arm64", sha256: $arm64 }
+              }
+            }' >dist/manifest.json
+          cat dist/manifest.json
+
+      - name: Tag a release commit that carries the manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          git add -f dist/manifest.json
+          git commit -m "Release $VERSION"
+          git tag "$VERSION"
+          git push origin "refs/tags/$VERSION"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$VERSION" out/gauger-linux-amd64 out/gauger-linux-arm64 out/checksums.txt --verify-tag --title "$VERSION" --generate-notes
+
+      - name: Move the major tag
+        run: |
+          major=${VERSION%%.*}
+          old=$(git rev-parse -q --verify "refs/tags/$major" || true)
+          git tag -f "$major"
+          git push --force-with-lease="refs/tags/$major:$old" origin "refs/tags/$major"

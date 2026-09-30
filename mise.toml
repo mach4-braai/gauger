@@ -1,5 +1,6 @@
 [tools]
 go = "1.27.1"
+node = "24.13.0"
 
 [tasks.build]
 description = "Build the gauger binary into bin/"
