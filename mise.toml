@@ -1,0 +1,30 @@
+[tools]
+go = "1.27.1"
+
+[tasks.build]
+description = "Build the gauger binary into bin/"
+run = "go build -trimpath -ldflags '-s -w' -o bin/gauger ./cmd/gauger"
+
+[tasks.test]
+description = "Run the unit tests"
+run = "go test ./..."
+
+[tasks.e2e]
+description = "Run the binary against a fake gauger-server (Linux only)"
+run = "go test -tags e2e -count=1 ./e2e/..."
+
+[tasks.check]
+description = "Formatting, vet and unit tests"
+shell = "bash -c"
+run = '''
+set -eu
+unformatted=$(gofmt -l cmd internal e2e)
+if [ -n "$unformatted" ]; then
+  echo "unformatted files:" >&2
+  echo "$unformatted" >&2
+  exit 1
+fi
+go vet ./...
+go vet -tags e2e ./e2e/...
+go test ./...
+'''
