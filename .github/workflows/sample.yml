@@ -3,9 +3,6 @@ name: Sample
 # Streams this commit's gauger to the real gauger-server. Until gauger-server
 # runs on the tailnet, the job ends with warnings and a fallback artifact.
 on:
-  pull_request:
-    paths:
-      - .github/workflows/sample.yml
   workflow_dispatch:
 
 permissions:
