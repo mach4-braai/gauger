@@ -10,11 +10,18 @@ GitHub Action that samples runner CPU and memory per step and streams it over Ta
 
 ## Usage
 
+Planned interface; `v1` is not published yet.
+
 ```yaml
-permissions:
-  id-token: write
-steps:
-  - uses: mach4-braai/gauger@v1
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: mach4-braai/gauger@v1
+      - uses: actions/checkout@v6
 ```
 
 ## Status
