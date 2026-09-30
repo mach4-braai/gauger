@@ -1,10 +1,6 @@
 name: Spike
 
 on:
-  pull_request:
-    paths:
-      - .github/spike/**
-      - .github/workflows/spike.yml
   workflow_dispatch:
 
 permissions:
