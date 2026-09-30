@@ -1,0 +1,105 @@
+name: Spike
+
+on:
+  pull_request:
+    paths:
+      - .github/spike/**
+      - .github/workflows/spike.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runner-facts:
+    name: runner facts (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      SHORT_LIVED: 500
+      LATE_OFFSETS: 0 420 1500
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Start the process trace
+        run: setsid nohup python3 .github/spike/proctrace.py "$RUNNER_TEMP/proctrace.jsonl" >/dev/null 2>&1 &
+
+      - name: Start the late OIDC fetcher
+        run: |
+          # shellcheck disable=SC2086
+          setsid nohup python3 .github/spike/oidc.py $LATE_OFFSETS >"$RUNNER_TEMP/oidc.log" 2>&1 &
+
+      - name: Probe the action input default
+        id: probe
+        uses: ./.github/spike/probe
+
+      - name: Compare check_run_id with the REST job ID
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FROM_INPUT: ${{ steps.probe.outputs.check-run-id }}
+          FROM_CONTEXT: ${{ job.check_run_id }}
+        run: |
+          set -eu
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq ".jobs[] | select(.runner_name == \"$RUNNER_NAME\")" >"$RUNNER_TEMP/job.json"
+          rest_id=$(jq -r .id "$RUNNER_TEMP/job.json")
+          check_url=$(jq -r .check_run_url "$RUNNER_TEMP/job.json")
+          {
+            echo "### ${{ matrix.os }}: job IDs"
+            echo
+            echo "| source | value |"
+            echo "|---|---|"
+            echo "| action input default \`job.check_run_id\` | \`$FROM_INPUT\` |"
+            echo "| workflow expression \`job.check_run_id\` | \`$FROM_CONTEXT\` |"
+            echo "| REST \`jobs[].id\` | \`$rest_id\` |"
+            echo "| REST \`check_run_url\` | \`$check_url\` |"
+            echo "| \`RUNNER_NAME\` | \`$RUNNER_NAME\` |"
+            echo
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Run sub-second processes
+        run: for _ in $(seq "$SHORT_LIVED"); do /bin/true; done
+
+      - name: Leave a background process running
+        run: bash -c 'sleep 40; true' gauger-spike-background &
+
+      - name: Run a container
+        run: docker run --rm alpine:3 sh -c 'sleep 4; true' gauger-spike-container
+
+      - name: Run a JavaScript action
+        uses: ./.github/spike/probe
+
+      - name: Wait for the late OIDC fetches
+        run: |
+          last=${LATE_OFFSETS##* }
+          timeout 1800 bash -c "until grep -q '^+$last' \"\$RUNNER_TEMP/oidc.log\"; do sleep 10; done"
+          {
+            echo "### ${{ matrix.os }}: OIDC tokens"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/oidc.log"
+            echo '```'
+            echo
+          } >>"$GITHUB_STEP_SUMMARY"
+          cat "$RUNNER_TEMP/oidc.log"
+
+      - name: Match processes to steps
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          pkill -TERM -f proctrace.py
+          sleep 1
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --jq ".jobs[] | select(.runner_name == \"$RUNNER_NAME\")" >"$RUNNER_TEMP/job.json"
+          python3 .github/spike/report.py "$RUNNER_TEMP/proctrace.jsonl" "$RUNNER_TEMP/job.json" "$SHORT_LIVED" | tee -a "$GITHUB_STEP_SUMMARY"
