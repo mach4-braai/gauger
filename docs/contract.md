@@ -64,7 +64,7 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 
 | Metric | Type | Unit | Attributes |
 |---|---|---|---|
-| `system.cpu.utilization` | gauge, fraction of all CPUs since the previous sample | `1` | `cpu.mode`: `user`, `nice`, `system`, `idle`, `iowait`, `interrupt`, `steal` |
+| `system.cpu.utilization` | gauge, busy share of all CPUs since the previous sample: every mode except idle and iowait | `1` | none |
 | `system.cpu.logical.count` | non-monotonic sum, once per batch | `{cpu}` | none |
 | `system.memory.usage` | non-monotonic sum | `By` | `system.memory.state`: `used`, `free`, `buffers`, `cached` |
 | `system.memory.limit` | non-monotonic sum, once per batch (`MemTotal`) | `By` | none |
