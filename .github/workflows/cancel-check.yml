@@ -11,13 +11,18 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cancel-check-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   sample:
+    name: sample
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      actions: write
-      id-token: write
+      actions: write # cancels its own run
+      id-token: write # gauger joins the tailnet and authenticates with OIDC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -25,9 +30,9 @@ jobs:
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
 
-      - uses: ./.github/actions/local-release
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
 
-      - uses: ./
+      - uses: ./ # zizmor: ignore[self-repository]
         with:
           server: http://gauger-server-absent:4318
 
@@ -40,6 +45,7 @@ jobs:
           sleep 300
 
   flushed:
+    name: flushed
     needs: [sample]
     if: always()
     runs-on: ubuntu-24.04

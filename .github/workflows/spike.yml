@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: spike-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   runner-facts:
     name: runner facts (${{ matrix.os }})
@@ -21,11 +25,12 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: read
-      actions: read
-      id-token: write
+      actions: read # reads this job's step timings from the REST API
+      id-token: write # fetches OIDC tokens to time their lifetime
     env:
       SHORT_LIVED: 500
       LATE_OFFSETS: 0 420 1500
+      OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +46,7 @@ jobs:
 
       - name: Probe the action input default
         id: probe
-        uses: ./.github/spike/probe
+        uses: ./.github/spike/probe # zizmor: ignore[self-repository]
 
       - name: Compare check_run_id with the REST job ID
         env:
@@ -55,7 +60,7 @@ jobs:
           rest_id=$(jq -r .id "$RUNNER_TEMP/job.json")
           check_url=$(jq -r .check_run_url "$RUNNER_TEMP/job.json")
           {
-            echo "### ${{ matrix.os }}: job IDs"
+            echo "### $OS: job IDs"
             echo
             echo "| source | value |"
             echo "|---|---|"
@@ -77,14 +82,14 @@ jobs:
         run: docker run --rm alpine:3 sh -c 'sleep 4; true' gauger-spike-container
 
       - name: Run a JavaScript action
-        uses: ./.github/spike/probe
+        uses: ./.github/spike/probe # zizmor: ignore[self-repository]
 
       - name: Wait for the late OIDC fetches
         run: |
           last=${LATE_OFFSETS##* }
           timeout 1800 bash -c "until grep -q '^+$last' \"\$RUNNER_TEMP/oidc.log\"; do sleep 10; done"
           {
-            echo "### ${{ matrix.os }}: OIDC tokens"
+            echo "### $OS: OIDC tokens"
             echo
             echo '```'
             cat "$RUNNER_TEMP/oidc.log"
@@ -112,7 +117,7 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-      id-token: write
+      id-token: write # fetches OIDC tokens to time their lifetime
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

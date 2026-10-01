@@ -16,10 +16,11 @@ concurrency:
 
 jobs:
   release:
+    name: release
     runs-on: ubuntu-24.04
     if: github.ref == 'refs/heads/master'
     permissions:
-      contents: write
+      contents: write # pushes the release tag and publishes the release
     env:
       VERSION: ${{ inputs.version }}
     steps:
