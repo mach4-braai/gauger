@@ -12,6 +12,8 @@ GitHub Action that samples runner CPU, memory, disk and network during a job and
 
 ## Usage
 
+`v1` is not published yet. Until the first release, `mach4-braai/gauger@v1` does not resolve.
+
 ```yaml
 jobs:
   build:
