@@ -1,7 +1,7 @@
 name: Sample
 
-# Streams this commit's gauger to the real gauger-server. Until gauger-server
-# runs on the tailnet, the job ends with warnings and a fallback artifact.
+# Streams this commit's gauger to the real gauger-server. The busy and idle
+# steps give each step window a known CPU profile to check in the UI.
 on:
   pull_request:
     paths:
@@ -28,5 +28,8 @@ jobs:
 
       - uses: ./
 
-      - name: Do some work
-        run: go test -count=1 ./...
+      - name: Busy, rebuild everything
+        run: go build -a -o /dev/null ./cmd/gauger
+
+      - name: Idle for 20 s
+        run: sleep 20
