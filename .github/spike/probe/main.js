@@ -1,4 +1,4 @@
-const { appendFileSync } = require("node:fs");
+import { appendFileSync } from "node:fs";
 
 const value = process.env["INPUT_CHECK-RUN-ID"] ?? "";
 console.log(`main: input check-run-id = ${JSON.stringify(value)}`);
