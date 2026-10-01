@@ -1,9 +1,7 @@
 import { createHash } from "node:crypto";
-import { createWriteStream, readFileSync } from "node:fs";
-import { chmod, readdir, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Readable, Transform } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 // dist/<entry>/index.js reads dist/manifest.json, which the release workflow writes.
@@ -25,7 +23,7 @@ export function readManifest(file) {
     manifest = JSON.parse(readFileSync(file, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") {
-      throw new Error("this ref has no dist/manifest.json; use a release tag such as mach4-braai/gauger@v1");
+      throw new Error("this ref has no dist/manifest.json; pin the commit of a release tag");
     }
     throw error;
   }
@@ -35,27 +33,20 @@ export function readManifest(file) {
   return manifest;
 }
 
-// download streams url to file and fails unless its sha256 matches. A file
-// that fails the check is deleted.
+// download fetches url into file and fails unless its sha256 matches. The body
+// is read whole: undici asserts and crashes the process when a server closes
+// the connection while a streamed body is paused for backpressure.
 export async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
-  if (!response.ok || !response.body) {
+  if (!response.ok) {
     throw new Error(`download ${url}: HTTP ${response.status}`);
   }
-  const hash = createHash("sha256");
-  const tee = new Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      callback(null, chunk);
-    },
-  });
-  await pipeline(Readable.fromWeb(response.body), tee, createWriteStream(file, { mode: 0o700 }));
-  const actual = hash.digest("hex");
+  const data = Buffer.from(await response.arrayBuffer());
+  const actual = createHash("sha256").update(data).digest("hex");
   if (actual !== sha256.toLowerCase()) {
-    await rm(file, { force: true });
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await chmod(file, 0o755);
+  await writeFile(file, data, { mode: 0o755 });
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.

@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: overhead-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   measure:
     name: ${{ matrix.mode }} (${{ matrix.os }})
@@ -20,7 +24,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
-      id-token: write
+      id-token: write # gauger joins the tailnet and authenticates with OIDC
+    env:
+      MODE: ${{ matrix.mode }}
+      OS: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,11 +35,11 @@ jobs:
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
 
-      - uses: ./.github/actions/local-release
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
 
       - name: Run gauger
         if: matrix.mode == 'gauger'
-        uses: ./
+        uses: ./ # zizmor: ignore[self-repository]
         with:
           server: http://gauger-server-absent:4318
 
@@ -43,7 +50,7 @@ jobs:
             /usr/bin/time -f "%e %U %S" -a -o "$RUNNER_TEMP/times" go build -a -o /dev/null ./cmd/gauger
           done
           {
-            echo "### ${{ matrix.mode }} on ${{ matrix.os }}, $(nproc) CPUs"
+            echo "### $MODE on $OS, $(nproc) CPUs"
             echo
             echo "| run | wall s | user s | sys s |"
             echo "|---|---|---|---|"

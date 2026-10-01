@@ -12,7 +12,7 @@ GitHub Action that samples runner CPU, memory, disk and network during a job and
 
 ## Usage
 
-`v1` is not published yet. Until the first release, `mach4-braai/gauger@v1` does not resolve.
+Pin the commit of a release tag, with the version in a comment, and let Renovate bump both. No release is published yet.
 
 ```yaml
 jobs:
@@ -22,12 +22,19 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: mach4-braai/gauger@v1
+      - uses: mach4-braai/gauger@<full commit sha> # vX.Y.Z
       - uses: actions/checkout@v7
       # ...
 ```
 
 Put it first, so sampling covers the whole job. It runs on Linux x64 and arm64 GitHub-hosted runners.
+
+Pin the commit the `vX.Y.Z` tag points to, not a `master` SHA. The release commit is the only one that carries `dist/manifest.json`, and no branch contains it. In a clone of gauger:
+
+```sh
+git fetch --tags
+git rev-list -n1 vX.Y.Z
+```
 
 | Input | Default | |
 |---|---|---|
@@ -42,4 +49,4 @@ Put it first, so sampling covers the whole job. It runs on Linux x64 and arm64 G
 
 `mise run check` runs the Go checks, and `mise run e2e` runs the binary against a fake server on Linux. `npm test` tests the action code, and `npm run build` rebuilds `dist/`, which is committed.
 
-The Release workflow builds the binaries, tags a commit that pins them in `dist/manifest.json`, publishes the release and moves the major tag. Branches have no manifest, so `uses: mach4-braai/gauger@master` warns and does nothing.
+The Release workflow builds the binaries, tags a commit that pins them in `dist/manifest.json` and publishes the release. Release tags are immutable, so there is no moving major tag. Branches have no manifest, so `uses: mach4-braai/gauger@master` warns and does nothing.

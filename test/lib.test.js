@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -20,7 +21,7 @@ test("download keeps a binary whose sha256 matches and makes it executable", asy
   assert.equal(statSync(file).mode & 0o777, 0o755);
 });
 
-test("download deletes a binary whose sha256 does not match", async () => {
+test("download does not keep a binary whose sha256 does not match", async () => {
   const file = path.join(tmp(), "gauger");
   await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(Buffer.from("tampered"))), /sha256/);
   assert.equal(existsSync(file), false);
@@ -28,6 +29,26 @@ test("download deletes a binary whose sha256 does not match", async () => {
 
 test("download fails on an HTTP error", async () => {
   await assert.rejects(download("https://example.test/gauger", "0".repeat(64), path.join(tmp(), "g"), serve("", 404)), /HTTP 404/);
+});
+
+test("download survives a server that closes the connection after a large body", async () => {
+  const body = randomBytes(32 << 20);
+  const server = createServer((_req, res) => {
+    res.writeHead(200, { "Content-Length": body.length, Connection: "close" });
+    res.end(body);
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${server.address().port}/gauger`;
+  const sum = createHash("sha256").update(body).digest("hex");
+  try {
+    for (let i = 0; i < 5; i++) {
+      const file = path.join(tmp(), "gauger");
+      await download(url, sum, file);
+      assert.equal(statSync(file).size, body.length);
+    }
+  } finally {
+    server.close();
+  }
 });
 
 test("assetKey supports Linux x64 and arm64 only", () => {

@@ -79884,7 +79884,7 @@ var summary_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _
 };
 
 
-const { access, appendFile, writeFile } = external_fs_.promises;
+const { access, appendFile, writeFile: summary_writeFile } = external_fs_.promises;
 const SUMMARY_ENV_VAR = 'GITHUB_STEP_SUMMARY';
 const SUMMARY_DOCS_URL = 'https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#adding-a-job-summary';
 class Summary {
@@ -79945,7 +79945,7 @@ class Summary {
         return summary_awaiter(this, void 0, void 0, function* () {
             const overwrite = !!(options === null || options === void 0 ? void 0 : options.overwrite);
             const filePath = yield this.filePath();
-            const writeFunc = overwrite ? writeFile : appendFile;
+            const writeFunc = overwrite ? summary_writeFile : appendFile;
             yield writeFunc(filePath, this._buffer, { encoding: 'utf8' });
             return this.emptyBuffer();
         });
@@ -80207,7 +80207,7 @@ var io_util_awaiter = (undefined && undefined.__awaiter) || function (thisArg, _
 };
 
 
-const { chmod: io_util_chmod, copyFile, lstat, mkdir, open: io_util_open, readdir, rename, rm: io_util_rm, rmdir, stat, symlink, unlink } = external_fs_.promises;
+const { chmod, copyFile, lstat, mkdir, open: io_util_open, readdir, rename, rm, rmdir, stat, symlink, unlink } = external_fs_.promises;
 // export const {open} = 'fs'
 const IS_WINDOWS = process.platform === 'win32';
 /**
@@ -140022,13 +140022,9 @@ const client = new DefaultArtifactClient();
 //# sourceMappingURL=artifact.js.map
 // EXTERNAL MODULE: external "node:fs/promises"
 var promises_ = __nccwpck_require__(1455);
-;// CONCATENATED MODULE: external "node:stream/promises"
-const external_node_stream_promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:stream/promises");
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(3136);
 ;// CONCATENATED MODULE: ./src/lib.js
-
-
 
 
 
@@ -140054,7 +140050,7 @@ function readManifest(file) {
     manifest = JSON.parse(readFileSync(file, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") {
-      throw new Error("this ref has no dist/manifest.json; use a release tag such as mach4-braai/gauger@v1");
+      throw new Error("this ref has no dist/manifest.json; pin the commit of a release tag");
     }
     throw error;
   }
@@ -140064,27 +140060,20 @@ function readManifest(file) {
   return manifest;
 }
 
-// download streams url to file and fails unless its sha256 matches. A file
-// that fails the check is deleted.
+// download fetches url into file and fails unless its sha256 matches. The body
+// is read whole: undici asserts and crashes the process when a server closes
+// the connection while a streamed body is paused for backpressure.
 async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
-  if (!response.ok || !response.body) {
+  if (!response.ok) {
     throw new Error(`download ${url}: HTTP ${response.status}`);
   }
-  const hash = createHash("sha256");
-  const tee = new Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      callback(null, chunk);
-    },
-  });
-  await pipeline(Readable.fromWeb(response.body), tee, createWriteStream(file, { mode: 0o700 }));
-  const actual = hash.digest("hex");
+  const data = Buffer.from(await response.arrayBuffer());
+  const actual = createHash("sha256").update(data).digest("hex");
   if (actual !== sha256.toLowerCase()) {
-    await rm(file, { force: true });
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await chmod(file, 0o755);
+  await writeFile(file, data, { mode: 0o755 });
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.

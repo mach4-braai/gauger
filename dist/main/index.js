@@ -31458,15 +31458,9 @@ function getIDToken(aud) {
 var external_node_crypto_ = __nccwpck_require__(7598);
 ;// CONCATENATED MODULE: external "node:fs/promises"
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
-// EXTERNAL MODULE: external "node:stream"
-var external_node_stream_ = __nccwpck_require__(7075);
-;// CONCATENATED MODULE: external "node:stream/promises"
-const external_node_stream_promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:stream/promises");
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(3136);
 ;// CONCATENATED MODULE: ./src/lib.js
-
-
 
 
 
@@ -31492,7 +31486,7 @@ function readManifest(file) {
     manifest = JSON.parse((0,external_node_fs_namespaceObject.readFileSync)(file, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") {
-      throw new Error("this ref has no dist/manifest.json; use a release tag such as mach4-braai/gauger@v1");
+      throw new Error("this ref has no dist/manifest.json; pin the commit of a release tag");
     }
     throw error;
   }
@@ -31502,27 +31496,20 @@ function readManifest(file) {
   return manifest;
 }
 
-// download streams url to file and fails unless its sha256 matches. A file
-// that fails the check is deleted.
+// download fetches url into file and fails unless its sha256 matches. The body
+// is read whole: undici asserts and crashes the process when a server closes
+// the connection while a streamed body is paused for backpressure.
 async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
-  if (!response.ok || !response.body) {
+  if (!response.ok) {
     throw new Error(`download ${url}: HTTP ${response.status}`);
   }
-  const hash = (0,external_node_crypto_.createHash)("sha256");
-  const tee = new external_node_stream_.Transform({
-    transform(chunk, _encoding, callback) {
-      hash.update(chunk);
-      callback(null, chunk);
-    },
-  });
-  await (0,external_node_stream_promises_namespaceObject.pipeline)(external_node_stream_.Readable.fromWeb(response.body), tee, (0,external_node_fs_namespaceObject.createWriteStream)(file, { mode: 0o700 }));
-  const actual = hash.digest("hex");
+  const data = Buffer.from(await response.arrayBuffer());
+  const actual = (0,external_node_crypto_.createHash)("sha256").update(data).digest("hex");
   if (actual !== sha256.toLowerCase()) {
-    await (0,promises_namespaceObject.rm)(file, { force: true });
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await (0,promises_namespaceObject.chmod)(file, 0o755);
+  await (0,promises_namespaceObject.writeFile)(file, data, { mode: 0o755 });
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.
