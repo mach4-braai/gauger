@@ -1,0 +1,35 @@
+name: Sample
+
+# Streams this commit's gauger to the real gauger-server. The busy and idle
+# steps give each step window a known CPU profile to check in the UI.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/sample.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release
+
+      - uses: ./
+
+      - name: Busy, rebuild everything
+        run: go build -a -o /dev/null ./cmd/gauger
+
+      - name: Idle for 20 s
+        run: sleep 20

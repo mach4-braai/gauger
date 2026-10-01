@@ -1,0 +1,58 @@
+name: Cancel check
+
+# The run cancels itself while gauger is sampling, then checks that the post
+# step still flushed. It always ends as cancelled.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/cancel-check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release
+
+      - uses: ./
+        with:
+          server: http://gauger-server-absent:4318
+
+      - name: Cancel this run mid-job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sleep 12
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+          sleep 300
+
+  flushed:
+    needs: [sample]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: gauger-*
+          path: fallback
+
+      - name: Check the final flush
+        run: |
+          set -eu
+          ls -R fallback
+          count=$(find fallback -name '*.pb' -size +0 | wc -l)
+          echo "The cancelled job flushed $count batches into its fallback artifact." | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$count" -gt 0
