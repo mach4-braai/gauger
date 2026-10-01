@@ -30,10 +30,10 @@ jobs:
             exit 1
           fi
 
-      # The release commit and both tags are pushed with this checkout's token.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
         with:
@@ -41,7 +41,7 @@ jobs:
 
       - name: Check that dist/ matches the sources
         run: |
-          npm ci
+          npm ci --ignore-scripts
           npm run build
           git diff --exit-code -- dist/
 
@@ -71,6 +71,8 @@ jobs:
           cat dist/manifest.json
 
       - name: Tag a release commit that carries the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -78,16 +80,9 @@ jobs:
           git add -f dist/manifest.json
           git commit -m "Release $VERSION"
           git tag "$VERSION"
-          git push origin "refs/tags/$VERSION"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}" "refs/tags/$VERSION"
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$VERSION" out/gauger-linux-amd64 out/gauger-linux-arm64 out/checksums.txt --verify-tag --title "$VERSION" --generate-notes
-
-      - name: Move the major tag
-        run: |
-          major=${VERSION%%.*}
-          old=$(git rev-parse -q --verify "refs/tags/$major" || true)
-          git tag -f "$major"
-          git push --force-with-lease="refs/tags/$major:$old" origin "refs/tags/$major"
