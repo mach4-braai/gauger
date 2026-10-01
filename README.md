@@ -29,10 +29,11 @@ jobs:
 
 Put it first, so sampling covers the whole job. It runs on Linux x64 and arm64 GitHub-hosted runners.
 
-Take the SHA from the release tag, not from `master`. Only the tagged release commit carries `dist/manifest.json`.
+Pin the commit the `vX.Y.Z` tag points to, not a `master` SHA. The release commit is the only one that carries `dist/manifest.json`, and no branch contains it. In a clone of gauger:
 
 ```sh
-git ls-remote https://github.com/mach4-braai/gauger refs/tags/vX.Y.Z
+git fetch --tags
+git rev-list -n1 vX.Y.Z
 ```
 
 | Input | Default | |
