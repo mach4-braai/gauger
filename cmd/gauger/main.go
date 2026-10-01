@@ -101,9 +101,9 @@ func run(o options, logger *log.Logger) Status {
 		return status
 	}
 	tokens, tokenErr := oidc.FromEnv(os.Getenv, o.oidcAudience)
-	client := func(hc *http.Client) agent.Uploader {
+	client := func(hc *http.Client, server string) agent.Uploader {
 		hc.Timeout = requestTimeout
-		return &upload.Client{BaseURL: o.server, HTTP: hc, Tokens: tokens}
+		return &upload.Client{BaseURL: server, HTTP: hc, Tokens: tokens}
 	}
 
 	var node *tailnet.Node
@@ -114,7 +114,7 @@ func run(o options, logger *log.Logger) Status {
 	case tokenErr != nil:
 		connect = func(context.Context) (agent.Uploader, error) { return nil, tokenErr }
 	case o.noTailnet:
-		connect = func(context.Context) (agent.Uploader, error) { return client(&http.Client{}), nil }
+		connect = func(context.Context) (agent.Uploader, error) { return client(&http.Client{}, o.server), nil }
 	default:
 		hostname := o.hostname
 		if hostname == "" {
@@ -138,7 +138,13 @@ func run(o options, logger *log.Logger) Status {
 			if err != nil {
 				return nil, err
 			}
-			return client(hc), nil
+			server, err := node.Qualify(ctx, o.server)
+			if err != nil {
+				logger.Printf("keeping %s as given: %v", o.server, err)
+				server = o.server
+			}
+			logger.Printf("sending to %s", server)
+			return client(hc, server), nil
 		}
 	}
 

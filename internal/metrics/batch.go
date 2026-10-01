@@ -149,32 +149,19 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	}
 }
 
+// cpuPoints returns the share of all CPUs that was busy since the previous
+// sample: every mode except idle and iowait. gauger-server reads it as one
+// series, so it carries no cpu.mode.
 func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberDataPoint {
 	if cur.Total() <= prev.Total() {
 		return nil
 	}
 	total := cur.Total() - prev.Total()
-	modes := []struct {
-		mode      string
-		prev, cur uint64
-	}{
-		{"user", prev.User, cur.User},
-		{"nice", prev.Nice, cur.Nice},
-		{"system", prev.System, cur.System},
-		{"idle", prev.Idle, cur.Idle},
-		{"iowait", prev.IOWait, cur.IOWait},
-		{"interrupt", prev.IRQ + prev.SoftIRQ, cur.IRQ + cur.SoftIRQ},
-		{"steal", prev.Steal, cur.Steal},
-	}
-	points := make([]*metricspb.NumberDataPoint, 0, len(modes))
-	for _, m := range modes {
-		points = append(points, &metricspb.NumberDataPoint{
-			TimeUnixNano: t,
-			Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: float64(sub(m.cur, m.prev)) / float64(total)},
-			Attributes:   []*commonpb.KeyValue{stringKV("cpu.mode", m.mode)},
-		})
-	}
-	return points
+	waiting := sub(cur.Idle, prev.Idle) + sub(cur.IOWait, prev.IOWait)
+	return []*metricspb.NumberDataPoint{{
+		TimeUnixNano: t,
+		Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: float64(sub(total, waiting)) / float64(total)},
+	}}
 }
 
 // baseDisk returns the counters a disk had when it was first seen. A counter

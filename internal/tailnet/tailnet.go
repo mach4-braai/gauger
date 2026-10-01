@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -139,6 +141,50 @@ func (n *Node) Wait(ctx context.Context) (*http.Client, error) {
 		return nil, errors.New("join the tailnet: stopped before joining")
 	}
 	return n.srv.HTTPClient(), nil
+}
+
+// Qualify rewrites a server URL whose host is a bare name, such as
+// http://gauger-server:4318, to the node's full MagicDNS name. tsnet only
+// resolves full names itself and sends a bare one to the system resolver,
+// which on a runner does not know the tailnet.
+func (n *Node) Qualify(ctx context.Context, rawURL string) (string, error) {
+	n.mu.Lock()
+	srv := n.srv
+	n.mu.Unlock()
+	if srv == nil {
+		return "", errors.New("not joined")
+	}
+	lc, err := srv.LocalClient()
+	if err != nil {
+		return "", err
+	}
+	st, err := lc.StatusWithoutPeers(ctx)
+	if err != nil {
+		return "", fmt.Errorf("read the MagicDNS suffix: %w", err)
+	}
+	if st.CurrentTailnet == nil || st.CurrentTailnet.MagicDNSSuffix == "" {
+		return "", errors.New("the tailnet has no MagicDNS suffix")
+	}
+	return QualifyURL(rawURL, st.CurrentTailnet.MagicDNSSuffix)
+}
+
+// QualifyURL appends suffix to the host of rawURL when the host is a bare
+// name. URLs with a dotted host or an IP address come back unchanged.
+func QualifyURL(rawURL, suffix string) (string, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	host := u.Hostname()
+	if host == "" || strings.Contains(host, ".") || strings.Contains(host, ":") {
+		return rawURL, nil
+	}
+	host += "." + strings.Trim(suffix, ".")
+	if port := u.Port(); port != "" {
+		host = net.JoinHostPort(host, port)
+	}
+	u.Host = host
+	return u.String(), nil
 }
 
 // JoinTime is how long the join took, or zero if it has not joined.

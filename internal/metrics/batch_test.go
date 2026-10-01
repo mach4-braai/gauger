@@ -102,8 +102,8 @@ func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 	if !ms["system.disk.io"].GetSum().IsMonotonic || ms["system.memory.usage"].GetSum().IsMonotonic {
 		t.Error("counters must be monotonic and memory usage must not be")
 	}
-	if got := point(t, ms["system.cpu.utilization"], "cpu.mode", "user", 101).GetAsDouble(); math.Abs(got-0.3) > 1e-9 {
-		t.Errorf("user utilization = %v, want 0.3", got)
+	if got := cpuAt(t, ms, 101); math.Abs(got-0.3) > 1e-9 {
+		t.Errorf("busy utilization = %v, want 0.3", got)
 	}
 	if got := point(t, ms["system.memory.usage"], "system.memory.state", "used", 101).GetAsInt(); got != 500 {
 		t.Errorf("used memory = %d, want 500", got)
@@ -132,9 +132,38 @@ func TestLaterFlushesKeepTheBaseline(t *testing.T) {
 	if p.GetAsInt() != 500 || p.StartTimeUnixNano != uint64(time.Unix(100, 0).UnixNano()) {
 		t.Errorf("second flush read = %d from %d, want 500 from the first sample", p.GetAsInt(), p.StartTimeUnixNano)
 	}
-	if got := point(t, ms["system.cpu.utilization"], "cpu.mode", "user", 105).GetAsDouble(); got != 0.5 {
+	if got := cpuAt(t, ms, 105); got != 0.5 {
 		t.Errorf("utilization across flushes = %v, want 0.5", got)
 	}
+}
+
+func TestCPUUtilizationIsOneBusySeries(t *testing.T) {
+	b := NewBatcher(nil, 2, "dev")
+	b.Add(sample(100, procfs.CPU{User: 10, Idle: 10}, 0, 0))
+	b.Add(sample(101, procfs.CPU{User: 70, System: 10, Idle: 20, IOWait: 10, Steal: 10}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	points := ms["system.cpu.utilization"].GetGauge().DataPoints
+	if len(points) != 1 || len(points[0].Attributes) != 0 {
+		t.Fatalf("got %d points with attributes %v, want one point without attributes", len(points), points[0].Attributes)
+	}
+	if got := points[0].GetAsDouble(); math.Abs(got-0.8) > 1e-9 {
+		t.Errorf("busy = %v, want 0.8: user, system and steal count, idle and iowait do not", got)
+	}
+}
+
+func cpuAt(t *testing.T, ms map[string]*metricspb.Metric, at int64) float64 {
+	t.Helper()
+	for _, p := range ms["system.cpu.utilization"].GetGauge().DataPoints {
+		if p.TimeUnixNano == uint64(time.Unix(at, 0).UnixNano()) {
+			return p.GetAsDouble()
+		}
+	}
+	t.Fatalf("no CPU utilization at %d", at)
+	return 0
 }
 
 func TestFlushWithNothingQueued(t *testing.T) {
