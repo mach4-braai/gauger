@@ -1,13 +1,12 @@
-name: CI
+name: Test CI
 
+# CI with gauger sampling every job, so gauger-server shows the whole run.
+# It stands in for CI on pull requests while gauger is being tried out.
 on:
-  push:
-    branches: [master]
-  # Test CI (test-ci.yml) runs on pull requests while gauger is being tried out.
-  # pull_request:
+  pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: test-ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,6 +20,9 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-26.04, ubuntu-26.04-arm]
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,13 +30,9 @@ jobs:
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
 
-      - name: Cache the Go modules and the compiler output
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: go-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}
+      - uses: ./.github/actions/local-release
+
+      - uses: ./
 
       - run: mise run check
 
@@ -48,12 +46,19 @@ jobs:
   action:
     name: action
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release
+
+      - uses: ./
 
       - run: npm ci
 
@@ -65,7 +70,7 @@ jobs:
           git diff --exit-code -- dist/
 
   # Joins the real tailnet with an unknown server name, so every batch ends up
-  # in the fallback artifact that the next job checks.
+  # in the fallback artifact, which the next job checks and gauger-server reads.
   action-e2e:
     name: action e2e (${{ matrix.os }})
     needs: [action]
@@ -106,11 +111,13 @@ jobs:
           pattern: gauger-*
           path: fallback
 
-      - name: Check one artifact per job, each with batches
+      # At least the two e2e legs. A job that streams to the live server adds
+      # its own artifact if the server was unreachable.
+      - name: Check the e2e artifacts, each with batches
         run: |
           set -eu
           ls -R fallback
-          test "$(find fallback -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 2
+          test "$(find fallback -mindepth 1 -maxdepth 1 -type d | wc -l)" -ge 2
           for dir in fallback/*/; do
             test "$(find "$dir" -name '*.pb' -size +0 | wc -l)" -gt 0
           done
