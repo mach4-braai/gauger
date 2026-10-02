@@ -12,7 +12,6 @@
     "test": "node --test 'test/*.test.js'"
   },
   "dependencies": {
-    "@actions/artifact": "6.2.1",
     "@actions/core": "3.0.1"
   },
   "devDependencies": {

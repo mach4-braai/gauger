@@ -31460,7 +31460,12 @@ var external_node_crypto_ = __nccwpck_require__(7598);
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(3136);
+// EXTERNAL MODULE: external "node:zlib"
+var external_node_zlib_ = __nccwpck_require__(8522);
 ;// CONCATENATED MODULE: ./src/lib.js
+
+
+
 
 
 
@@ -31541,6 +31546,155 @@ function alive(pid) {
   }
 }
 
+// createZip stores files uncompressed, which keeps the writer to a few dozen
+// lines. The fallback artifact holds a handful of small .pb files, so the
+// size cost of skipping deflate is negligible.
+function createZip(entries) {
+  const localParts = [];
+  const centralParts = [];
+  const { date, time } = dosDateTime(new Date());
+  let offset = 0;
+  for (const { name, data } of entries) {
+    const nameBuf = Buffer.from(name, "utf8");
+    const crc = crc32(data) >>> 0;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4); // version needed to extract
+    local.writeUInt16LE(0, 6); // general purpose flag
+    local.writeUInt16LE(0, 8); // method: stored
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18); // compressed size
+    local.writeUInt32LE(data.length, 22); // uncompressed size
+    local.writeUInt16LE(nameBuf.length, 26);
+    local.writeUInt16LE(0, 28); // extra length
+    localParts.push(local, nameBuf, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4); // version made by
+    central.writeUInt16LE(20, 6); // version needed to extract
+    central.writeUInt16LE(0, 8); // general purpose flag
+    central.writeUInt16LE(0, 10); // method: stored
+    central.writeUInt16LE(time, 12);
+    central.writeUInt16LE(date, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20); // compressed size
+    central.writeUInt32LE(data.length, 24); // uncompressed size
+    central.writeUInt16LE(nameBuf.length, 28);
+    central.writeUInt16LE(0, 30); // extra length
+    central.writeUInt16LE(0, 32); // comment length
+    central.writeUInt16LE(0, 34); // disk number start
+    central.writeUInt16LE(0, 36); // internal file attributes
+    central.writeUInt32LE((0o100644 << 16) >>> 0, 38); // external file attributes
+    central.writeUInt32LE(offset, 42); // local header offset
+    centralParts.push(central, nameBuf);
+
+    offset += local.length + nameBuf.length + data.length;
+  }
+  const centralDir = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4); // disk number
+  end.writeUInt16LE(0, 6); // disk with central dir
+  end.writeUInt16LE(entries.length, 8); // entries on this disk
+  end.writeUInt16LE(entries.length, 10); // total entries
+  end.writeUInt32LE(centralDir.length, 12);
+  end.writeUInt32LE(offset, 16); // central dir offset
+  end.writeUInt16LE(0, 20); // comment length
+  return Buffer.concat([...localParts, centralDir, end]);
+}
+
+function dosDateTime(d) {
+  const date = (Math.max(d.getFullYear(), 1980) - 1980 << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+  return { date, time };
+}
+
+// getBackendIds reads the workflow run and job run backend IDs out of the
+// ACTIONS_RUNTIME_TOKEN JWT's `scp` claim, the same way @actions/artifact does.
+function getBackendIds(runtimeToken) {
+  const payload = runtimeToken.split(".")[1];
+  const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+  for (const scope of (decoded.scp ?? "").split(" ")) {
+    const parts = scope.split(":");
+    if (parts[0] === "Actions.Results" && parts.length === 3) {
+      return { workflowRunBackendId: parts[1], workflowJobRunBackendId: parts[2] };
+    }
+  }
+  throw new Error("ACTIONS_RUNTIME_TOKEN has no Actions.Results scope");
+}
+
+async function twirpRequest(resultsUrl, runtimeToken, method, body) {
+  const url = new URL(`/twirp/github.actions.results.api.v1.ArtifactService/${method}`, resultsUrl).href;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${runtimeToken}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`${method}: HTTP ${response.status}, non-JSON response`);
+  }
+  if (!response.ok || !data.ok) {
+    throw new Error(`${method}: HTTP ${response.status}${data.msg ? `: ${data.msg}` : ""}`);
+  }
+  return data;
+}
+
+// uploadArtifact zips files (named by their basename) and uploads them as a
+// GitHub Actions artifact over the Actions Results Twirp API, the same
+// CreateArtifact / blob upload / FinalizeArtifact flow as @actions/artifact.
+async function uploadArtifact(name, files, retentionDays) {
+  try {
+    const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN;
+    if (!runtimeToken) throw new Error("ACTIONS_RUNTIME_TOKEN is not set");
+    const resultsUrl = process.env.ACTIONS_RESULTS_URL;
+    if (!resultsUrl) throw new Error("ACTIONS_RESULTS_URL is not set");
+    const ids = getBackendIds(runtimeToken);
+
+    const entries = await Promise.all(files.map(async (file) => ({ name: path.basename(file), data: await readFile(file) })));
+    const zip = createZip(entries);
+
+    const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const created = await twirpRequest(resultsUrl, runtimeToken, "CreateArtifact", {
+      workflow_run_backend_id: ids.workflowRunBackendId,
+      workflow_job_run_backend_id: ids.workflowJobRunBackendId,
+      name,
+      expires_at: expiresAt,
+      version: 7,
+      mime_type: "application/zip",
+    });
+
+    const uploadResponse = await fetch(created.signed_upload_url, {
+      method: "PUT",
+      headers: { "x-ms-blob-type": "BlockBlob", "Content-Type": "application/zip" },
+      body: zip,
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!uploadResponse.ok) {
+      throw new Error(`blob upload: HTTP ${uploadResponse.status}`);
+    }
+    const hash = createHash("sha256").update(zip).digest("hex");
+
+    await twirpRequest(resultsUrl, runtimeToken, "FinalizeArtifact", {
+      workflow_run_backend_id: ids.workflowRunBackendId,
+      workflow_job_run_backend_id: ids.workflowJobRunBackendId,
+      name,
+      size: String(zip.length),
+      hash: `sha256:${hash}`,
+    });
+    return true;
+  } catch (error) {
+    core.warning(`gauger could not upload the fallback artifact: ${error.message}`);
+    return false;
+  }
+}
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 ;// CONCATENATED MODULE: ./src/main.js
