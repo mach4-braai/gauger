@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
@@ -38,7 +38,9 @@ export function readManifest(file) {
 
 // download fetches url into file and fails unless its sha256 matches. The body
 // is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure.
+// the connection while a streamed body is paused for backpressure. It writes
+// to file.tmp and renames into place, so a reader never sees a half-written
+// or swapped binary.
 export async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
@@ -49,7 +51,14 @@ export async function download(url, sha256, file, fetchImpl = fetch) {
   if (actual !== sha256.toLowerCase()) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await writeFile(file, data, { mode: 0o755 });
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, data, { mode: 0o700 });
+  try {
+    await rename(tmp, file);
+  } catch (error) {
+    await rm(tmp, { force: true });
+    throw error;
+  }
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.
