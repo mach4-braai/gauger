@@ -140031,6 +140031,7 @@ var external_node_url_ = __nccwpck_require__(3136);
 
 
 
+
 // dist/<entry>/index.js reads dist/manifest.json, which the release workflow writes.
 const defaultManifestPath = external_node_path_.join(external_node_path_.dirname((0,external_node_url_.fileURLToPath)(import.meta.url)), "..", "manifest.json");
 
@@ -140060,9 +140061,11 @@ function readManifest(file) {
   return manifest;
 }
 
-// download fetches url into file and fails unless its sha256 matches. The body
-// is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure.
+// download fetches a gzipped url into file and fails unless the sha256 of the
+// compressed bytes matches. It gunzips only after the hash check passes, and
+// returns the number of compressed bytes it read. The body is read whole:
+// undici asserts and crashes the process when a server closes the connection
+// while a streamed body is paused for backpressure.
 async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
@@ -140073,7 +140076,8 @@ async function download(url, sha256, file, fetchImpl = fetch) {
   if (actual !== sha256.toLowerCase()) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await writeFile(file, data, { mode: 0o755 });
+  await writeFile(file, gunzipSync(data), { mode: 0o755 });
+  return data.length;
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.

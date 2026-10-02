@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 // dist/<entry>/index.js reads dist/manifest.json, which the release workflow writes.
 export const defaultManifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "manifest.json");
@@ -33,9 +34,11 @@ export function readManifest(file) {
   return manifest;
 }
 
-// download fetches url into file and fails unless its sha256 matches. The body
-// is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure.
+// download fetches a gzipped url into file and fails unless the sha256 of the
+// compressed bytes matches. It gunzips only after the hash check passes, and
+// returns the number of compressed bytes it read. The body is read whole:
+// undici asserts and crashes the process when a server closes the connection
+// while a streamed body is paused for backpressure.
 export async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
@@ -46,7 +49,8 @@ export async function download(url, sha256, file, fetchImpl = fetch) {
   if (actual !== sha256.toLowerCase()) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await writeFile(file, data, { mode: 0o755 });
+  await writeFile(file, gunzipSync(data), { mode: 0o755 });
+  return data.length;
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.

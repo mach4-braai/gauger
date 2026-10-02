@@ -27,7 +27,8 @@ async function main() {
   const stateDir = path.join(dir, "state");
   mkdirSync(stateDir, { recursive: true });
   const binary = path.join(dir, "gauger");
-  await download(asset.url, asset.sha256, binary);
+  const bytes = await download(asset.url, asset.sha256, binary);
+  core.info(`downloaded ${bytes} bytes for ${key}`);
 
   const checkRunId = core.getInput("check-run-id");
   const args = [

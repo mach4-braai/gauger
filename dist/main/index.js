@@ -31460,7 +31460,10 @@ var external_node_crypto_ = __nccwpck_require__(7598);
 const promises_namespaceObject = __WEBPACK_EXTERNAL_createRequire(import.meta.url)("node:fs/promises");
 // EXTERNAL MODULE: external "node:url"
 var external_node_url_ = __nccwpck_require__(3136);
+// EXTERNAL MODULE: external "node:zlib"
+var external_node_zlib_ = __nccwpck_require__(8522);
 ;// CONCATENATED MODULE: ./src/lib.js
+
 
 
 
@@ -31496,9 +31499,11 @@ function readManifest(file) {
   return manifest;
 }
 
-// download fetches url into file and fails unless its sha256 matches. The body
-// is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure.
+// download fetches a gzipped url into file and fails unless the sha256 of the
+// compressed bytes matches. It gunzips only after the hash check passes, and
+// returns the number of compressed bytes it read. The body is read whole:
+// undici asserts and crashes the process when a server closes the connection
+// while a streamed body is paused for backpressure.
 async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
@@ -31509,7 +31514,8 @@ async function download(url, sha256, file, fetchImpl = fetch) {
   if (actual !== sha256.toLowerCase()) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await (0,promises_namespaceObject.writeFile)(file, data, { mode: 0o755 });
+  await (0,promises_namespaceObject.writeFile)(file, (0,external_node_zlib_.gunzipSync)(data), { mode: 0o755 });
+  return data.length;
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.
@@ -31573,7 +31579,8 @@ async function main() {
   const stateDir = external_node_path_namespaceObject.join(dir, "state");
   (0,external_node_fs_namespaceObject.mkdirSync)(stateDir, { recursive: true });
   const binary = external_node_path_namespaceObject.join(dir, "gauger");
-  await download(asset.url, asset.sha256, binary);
+  const bytes = await download(asset.url, asset.sha256, binary);
+  info(`downloaded ${bytes} bytes for ${key}`);
 
   const checkRunId = getInput("check-run-id");
   const args = [
