@@ -31543,6 +31543,31 @@ function alive(pid) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function mib(bytes) {
+  return `${((bytes ?? 0) / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+// summaryTable renders a status.json object as a markdown table for the job
+// summary: peak CPU and memory, disk and network totals, batches sent and
+// unsent, and tailnet join time. It renders the same way whether or not
+// gauger-server was reachable, so a job with no server access still gets a
+// table.
+function summaryTable(status) {
+  const peaks = status.peaks ?? {};
+  const rows = [
+    ["Peak CPU utilization", `${((peaks.cpu_utilization ?? 0) * 100).toFixed(1)}%`],
+    ["Peak memory used", mib(peaks.memory_used_bytes)],
+    ["Disk read", mib(peaks.disk_read_bytes)],
+    ["Disk write", mib(peaks.disk_write_bytes)],
+    ["Network received", mib(peaks.network_rx_bytes)],
+    ["Network sent", mib(peaks.network_tx_bytes)],
+    ["Batches sent", `${status.sent_batches ?? 0}`],
+    ["Batches unsent", `${status.unsent_batches ?? 0}`],
+    ["Joined the tailnet", status.join_ms ? `${(status.join_ms / 1000).toFixed(1)} s` : "no"],
+  ];
+  return ["| Metric | Value |", "| --- | --- |", ...rows.map(([key, value]) => `| ${key} | ${value} |`)].join("\n");
+}
+
 ;// CONCATENATED MODULE: ./src/main.js
 
 

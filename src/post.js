@@ -4,7 +4,7 @@ import path from "node:path";
 import { DefaultArtifactClient } from "@actions/artifact";
 import * as core from "@actions/core";
 
-import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches } from "./lib.js";
+import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, summaryTable } from "./lib.js";
 
 async function stop(pid, statusFile) {
   try {
@@ -28,7 +28,7 @@ async function stop(pid, statusFile) {
   }
 }
 
-function report(statusFile) {
+async function report(statusFile) {
   if (!existsSync(statusFile)) return;
   const status = JSON.parse(readFileSync(statusFile, "utf8"));
   for (const warning of status.warnings ?? []) {
@@ -36,6 +36,7 @@ function report(statusFile) {
   }
   const joined = status.join_ms ? `joined the tailnet in ${(status.join_ms / 1000).toFixed(1)} s, ` : "";
   core.info(`gauger ${status.version}: ${joined}sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
+  await core.summary.addHeading(`gauger ${status.version}`, 3).addRaw(summaryTable(status), true).write();
 }
 
 async function uploadUnsent(spoolDir, checkRunId) {
@@ -54,7 +55,7 @@ async function post() {
   const statusFile = path.join(stateDir, "status.json");
 
   await stop(pid, statusFile);
-  report(statusFile);
+  await report(statusFile);
 
   const log = path.join(dir, "gauger.log");
   if (existsSync(log)) {

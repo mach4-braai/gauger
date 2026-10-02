@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -177,5 +178,91 @@ func TestUnauthorizedIsRetried(t *testing.T) {
 	}
 	if !(&upload.StatusError{Code: 422}).Permanent() {
 		t.Fatal("422 must not be retried")
+	}
+}
+
+type scriptedSampler struct {
+	samples []procfs.Sample
+	n       int
+}
+
+func (s *scriptedSampler) Read(now time.Time) (procfs.Sample, error) {
+	sample := s.samples[s.n]
+	sample.Time = now
+	s.n++
+	return sample, nil
+}
+
+func disk(name string, read, write uint64) procfs.Disk {
+	return procfs.Disk{Name: name, ReadBytes: read, WriteBytes: write}
+}
+
+func iface(name string, rx, tx uint64) procfs.Interface {
+	return procfs.Interface{Name: name, RxBytes: rx, TxBytes: tx}
+}
+
+// TestPeaksCoverFirstSampleAndACounterReset checks that the run's peaks
+// start cold at the first sample (no prior point to diff against) and that
+// a disk or interface counter going backwards contributes nothing for that
+// tick instead of wrapping into a huge total.
+func TestPeaksCoverFirstSampleAndACounterReset(t *testing.T) {
+	sampler := &scriptedSampler{samples: []procfs.Sample{
+		// First sample: establishes the baseline only.
+		{
+			CPU:        procfs.CPU{User: 100, Idle: 100},
+			Memory:     procfs.Memory{Total: 1000, Available: 400},
+			Disks:      []procfs.Disk{disk("sda", 1000, 500)},
+			Interfaces: []procfs.Interface{iface("eth0", 200, 100)},
+		},
+		// Normal increase: sets the peaks.
+		{
+			CPU:        procfs.CPU{User: 150, Idle: 130},
+			Memory:     procfs.Memory{Total: 1000, Available: 300},
+			Disks:      []procfs.Disk{disk("sda", 1500, 600)},
+			Interfaces: []procfs.Interface{iface("eth0", 500, 150)},
+		},
+		// Counter reset: every disk and interface counter goes backwards.
+		{
+			CPU:        procfs.CPU{User: 160, Idle: 140},
+			Memory:     procfs.Memory{Total: 1000, Available: 650},
+			Disks:      []procfs.Disk{disk("sda", 200, 50)},
+			Interfaces: []procfs.Interface{iface("eth0", 100, 20)},
+		},
+		// Normal increase after the reset.
+		{
+			CPU:        procfs.CPU{User: 170, Idle: 150},
+			Memory:     procfs.Memory{Total: 1000, Available: 500},
+			Disks:      []procfs.Disk{disk("sda", 400, 80)},
+			Interfaces: []procfs.Interface{iface("eth0", 300, 40)},
+		},
+	}}
+
+	sp, err := spool.Open(t.TempDir(), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		Sampler: sampler,
+		Batcher: metrics.NewBatcher(nil, 1, "test"),
+		Spool:   sp,
+		Log:     log.New(io.Discard, "", 0),
+	}
+	start := time.Now()
+	for i := range sampler.samples {
+		a.sample(start.Add(time.Duration(i) * time.Second))
+	}
+	peaks := a.result(sendResult{}).Peaks
+
+	if got, want := peaks.CPUUtilization, 0.625; math.Abs(got-want) > 1e-9 {
+		t.Errorf("peak CPU utilization = %v, want %v (the later, lower-busy samples must not raise it)", got, want)
+	}
+	if peaks.MemoryUsed != 700 {
+		t.Errorf("peak memory used = %d, want 700", peaks.MemoryUsed)
+	}
+	if peaks.DiskRead != 700 || peaks.DiskWrite != 130 {
+		t.Errorf("disk read/write = %d/%d, want 700/130 (reset tick must add 0, not the backward delta)", peaks.DiskRead, peaks.DiskWrite)
+	}
+	if peaks.NetworkRx != 500 || peaks.NetworkTx != 70 {
+		t.Errorf("network rx/tx = %d/%d, want 500/70 (reset tick must add 0, not the backward delta)", peaks.NetworkRx, peaks.NetworkTx)
 	}
 }

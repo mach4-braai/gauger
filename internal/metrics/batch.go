@@ -26,6 +26,26 @@ type Batcher struct {
 	diskBase  map[string]procfs.Disk
 	ifaceBase map[string]procfs.Interface
 	pending   []procfs.Sample
+
+	lastCPU     *procfs.CPU
+	lastDisks   map[string]procfs.Disk
+	lastIfaces  map[string]procfs.Interface
+	peakCPU     float64
+	peakMemUsed uint64
+	diskRead    uint64
+	diskWrite   uint64
+	netRx       uint64
+	netTx       uint64
+}
+
+// Peaks are the run's maximum and cumulative values, for the job summary.
+type Peaks struct {
+	CPUUtilization float64 `json:"cpu_utilization"`
+	MemoryUsed     uint64  `json:"memory_used_bytes"`
+	DiskRead       uint64  `json:"disk_read_bytes"`
+	DiskWrite      uint64  `json:"disk_write_bytes"`
+	NetworkRx      uint64  `json:"network_rx_bytes"`
+	NetworkTx      uint64  `json:"network_tx_bytes"`
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
@@ -39,20 +59,70 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		kvs = append(kvs, stringKV(a.Key, a.Value))
 	}
 	return &Batcher{
-		resource:  &resourcepb.Resource{Attributes: kvs},
-		scope:     &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
-		nproc:     int64(nproc),
-		diskBase:  map[string]procfs.Disk{},
-		ifaceBase: map[string]procfs.Interface{},
+		resource:   &resourcepb.Resource{Attributes: kvs},
+		scope:      &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
+		nproc:      int64(nproc),
+		diskBase:   map[string]procfs.Disk{},
+		ifaceBase:  map[string]procfs.Interface{},
+		lastDisks:  map[string]procfs.Disk{},
+		lastIfaces: map[string]procfs.Interface{},
 	}
 }
 
-// Add queues a sample for the next flush.
+// Add queues a sample for the next flush and updates the run's peaks.
 func (b *Batcher) Add(s procfs.Sample) {
 	if b.start == 0 {
 		b.start = nanos(s.Time)
 	}
+	b.trackPeaks(s)
 	b.pending = append(b.pending, s)
+}
+
+// trackPeaks updates the run's maximum and cumulative values from one
+// sample. A counter that went backwards contributes nothing for that tick,
+// the same way baseDisk and baseIface treat a reset.
+func (b *Batcher) trackPeaks(s procfs.Sample) {
+	if prev := b.lastCPU; prev != nil && s.CPU.Total() > prev.Total() {
+		total := s.CPU.Total() - prev.Total()
+		waiting := sub(s.CPU.Idle, prev.Idle) + sub(s.CPU.IOWait, prev.IOWait)
+		if util := float64(sub(total, waiting)) / float64(total); util > b.peakCPU {
+			b.peakCPU = util
+		}
+	}
+	cpu := s.CPU
+	b.lastCPU = &cpu
+
+	if used := sub(s.Memory.Total, s.Memory.Available); used > b.peakMemUsed {
+		b.peakMemUsed = used
+	}
+
+	for _, d := range s.Disks {
+		if prev, ok := b.lastDisks[d.Name]; ok {
+			b.diskRead += sub(d.ReadBytes, prev.ReadBytes)
+			b.diskWrite += sub(d.WriteBytes, prev.WriteBytes)
+		}
+		b.lastDisks[d.Name] = d
+	}
+	for _, n := range s.Interfaces {
+		if prev, ok := b.lastIfaces[n.Name]; ok {
+			b.netRx += sub(n.RxBytes, prev.RxBytes)
+			b.netTx += sub(n.TxBytes, prev.TxBytes)
+		}
+		b.lastIfaces[n.Name] = n
+	}
+}
+
+// Peaks returns the run's maximum and cumulative values so far, for the
+// status file the post step reads.
+func (b *Batcher) Peaks() Peaks {
+	return Peaks{
+		CPUUtilization: b.peakCPU,
+		MemoryUsed:     b.peakMemUsed,
+		DiskRead:       b.diskRead,
+		DiskWrite:      b.diskWrite,
+		NetworkRx:      b.netRx,
+		NetworkTx:      b.netTx,
+	}
 }
 
 // Len is the number of samples waiting for a flush.
