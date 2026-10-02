@@ -11,6 +11,8 @@ import (
 const stat = `cpu  100 5 50 1000 20 3 2 1 0 0
 cpu0 50 2 25 500 10 1 1 0 0 0
 intr 12345
+procs_running 4
+procs_blocked 1
 `
 
 const meminfo = `MemTotal:       16384000 kB
@@ -72,8 +74,9 @@ func TestRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Sample{
-		Time: now,
-		CPU:  CPU{User: 100, Nice: 5, System: 50, Idle: 1000, IOWait: 20, IRQ: 3, SoftIRQ: 2, Steal: 1},
+		Time:      now,
+		CPU:       CPU{User: 100, Nice: 5, System: 50, Idle: 1000, IOWait: 20, IRQ: 3, SoftIRQ: 2, Steal: 1},
+		Processes: Processes{Running: 4, Blocked: 1},
 		Memory: Memory{
 			Total:        16384000 * 1024,
 			Free:         8000000 * 1024,
@@ -114,5 +117,16 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func TestReadFailsOnMalformedProcessCounts(t *testing.T) {
+	r := fixture(t, true)
+	bad := "cpu  100 5 50 1000 20 3 2 1 0 0\nprocs_running x\n"
+	if err := os.WriteFile(filepath.Join(r.Proc, "stat"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Read(time.Now()); err == nil {
+		t.Fatal("Read succeeded on a malformed procs_running line")
 	}
 }

@@ -172,3 +172,25 @@ func TestFlushWithNothingQueued(t *testing.T) {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
 	}
 }
+
+func TestProcessCountIsAGaugePerState(t *testing.T) {
+	b := NewBatcher(nil, 2, "dev")
+	s := sample(100, procfs.CPU{User: 10, Idle: 10}, 0, 0)
+	s.Processes = procfs.Processes{Running: 3, Blocked: 1}
+	b.Add(s)
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.process.count"]
+	if m.Unit != "{process}" {
+		t.Fatalf("unit = %q, want {process}", m.Unit)
+	}
+	if got := point(t, m, "process.state", "running", 100).GetAsInt(); got != 3 {
+		t.Errorf("running = %d, want 3", got)
+	}
+	if got := point(t, m, "process.state", "blocked", 100).GetAsInt(); got != 1 {
+		t.Errorf("blocked = %d, want 1", got)
+	}
+}
