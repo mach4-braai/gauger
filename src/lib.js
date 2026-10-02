@@ -5,10 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
 
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
-// dist/<entry>/index.js reads dist/manifest.json, which the release workflow writes.
-export const defaultManifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "manifest.json");
+// src/<entry>.js runs directly, so the manifest lives at ../dist/manifest.json,
+// which the release workflow writes.
+export const defaultManifestPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist", "manifest.json");
 
 export const STOP_TIMEOUT_MS = 30_000;
 
