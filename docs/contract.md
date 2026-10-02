@@ -5,6 +5,7 @@ gauger and [gauger-server](https://github.com/mach4-braai/gauger-server) share t
 ## Transport
 
 - gauger joins the tailnet as an ephemeral `tag:gauger-ci` node and sends HTTP to `http://gauger-server:4318`. The ACL lets `tag:gauger-ci` reach only `tag:gauger-server:4318`.
+- gauger calls `envknob.SetNoLogsNoSupport()` before constructing the `tsnet.Server`, so tsnet never uploads its own logs to `log.tailscale.com`.
 - Every request carries `Authorization: Bearer <GitHub OIDC JWT>` with `aud` `gauger-server`. gauger fetches a new token at least 60 s before `exp`, so one job sends several tokens.
 
 ## Endpoints
