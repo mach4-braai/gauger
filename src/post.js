@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
 import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, uploadArtifact } from "./lib.js";
 

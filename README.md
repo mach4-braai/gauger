@@ -47,6 +47,6 @@ git rev-list -n1 vX.Y.Z
 
 ## Development
 
-`mise run check` runs the Go checks, and `mise run e2e` runs the binary against a fake server on Linux. `npm test` tests the action code, and `npm run build` rebuilds `dist/`, which is committed.
+`mise run check` runs the Go checks, and `mise run e2e` runs the binary against a fake server on Linux. `npm test` tests the action code, which runs straight from `src/` with no dependencies and no build step.
 
 The Release workflow builds the binaries, tags a commit that pins them in `dist/manifest.json` and publishes the release. Release tags are immutable, so there is no moving major tag. Branches have no manifest, so `uses: mach4-braai/gauger@master` warns and does nothing.
