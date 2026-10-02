@@ -74,7 +74,7 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
-- Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+- Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs, and leaves out any interface with a `/sys/class/net/<name>/master` link, such as a virtual function enslaved to a netvsc interface on Azure.
 
 ## Fallback artifact
 
