@@ -145,6 +145,51 @@ func (r *Reader) memory() (Memory, error) {
 	return m, nil
 }
 
+// CPUModel returns the CPU model from /proc/cpuinfo. x86 kernels report it
+// under "model name". arm64 kernels have no such field, only the numeric
+// "CPU implementer" and "CPU part", which still distinguish CPU generations.
+// It returns "" when neither is present.
+func (r *Reader) CPUModel() (string, error) {
+	f, err := os.Open(filepath.Join(r.Proc, "cpuinfo"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var modelName, implementer, part string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		switch key {
+		case "model name":
+			if modelName == "" {
+				modelName = value
+			}
+		case "CPU implementer":
+			if implementer == "" {
+				implementer = value
+			}
+		case "CPU part":
+			if part == "" {
+				part = value
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if modelName != "" {
+		return modelName, nil
+	}
+	if implementer != "" && part != "" {
+		return implementer + " " + part, nil
+	}
+	return "", nil
+}
+
 // wholeDisk reports whether name is a disk rather than a partition or a
 // loop or RAM device. Only whole disks appear in /sys/block.
 func (r *Reader) wholeDisk(name string) bool {
