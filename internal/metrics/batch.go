@@ -74,6 +74,7 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		cpu       []*metricspb.NumberDataPoint
 		memUsage  []*metricspb.NumberDataPoint
 		memAvail  []*metricspb.NumberDataPoint
+		paging    []*metricspb.NumberDataPoint
 		diskIO    []*metricspb.NumberDataPoint
 		diskOps   []*metricspb.NumberDataPoint
 		netIO     []*metricspb.NumberDataPoint
@@ -101,6 +102,13 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 			memUsage = append(memUsage, b.intPoint(t, int64(st.value), stringKV("system.memory.state", st.state)))
 		}
 		memAvail = append(memAvail, b.intPoint(t, int64(m.Available)))
+
+		if m.SwapTotal > 0 {
+			swapUsed := sub(m.SwapTotal, m.SwapFree)
+			paging = append(paging,
+				b.intPoint(t, int64(swapUsed), stringKV("system.paging.state", "used")),
+				b.intPoint(t, int64(m.SwapFree), stringKV("system.paging.state", "free")))
+		}
 
 		for _, d := range s.Disks {
 			base := b.baseDisk(d)
@@ -139,6 +147,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(paging) > 0 {
+		ms = append(ms, upDown("system.paging.usage", "By", paging...))
 	}
 
 	return &colmetricspb.ExportMetricsServiceRequest{
