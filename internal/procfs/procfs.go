@@ -43,10 +43,6 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
-// Pressure holds the total stall time, in microseconds, that at least one
-// task (some) or all non-idle tasks (full) spent waiting for cpu, memory or
-// io since boot. Older kernels omit the full line for cpu, in which case
-// Full is nil; current kernels write it as an always-zero line instead.
 type Pressure struct {
 	Resource string
 	Some     uint64
@@ -255,9 +251,6 @@ func (r *Reader) netdev() ([]Interface, error) {
 	return hardware, nil
 }
 
-// pressure reads /proc/pressure/{cpu,memory,io}. A kernel without PSI, or
-// with one resource's accounting disabled, has no file for it: that resource
-// is left out rather than failing the sample.
 func (r *Reader) pressure() ([]Pressure, error) {
 	var all []Pressure
 	for _, resource := range []string{"cpu", "memory", "io"} {
@@ -306,7 +299,6 @@ func (r *Reader) pressureFile(resource string) (Pressure, bool, error) {
 	return p, true, nil
 }
 
-// pressureTotal reads the "total=<microseconds>" field of a some/full line.
 func pressureTotal(fields string) (uint64, error) {
 	for _, kv := range strings.Fields(fields) {
 		if k, v, ok := strings.Cut(kv, "="); ok && k == "total" {
