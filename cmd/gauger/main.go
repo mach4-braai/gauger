@@ -155,7 +155,7 @@ func run(o options, logger *log.Logger) Status {
 			FinalBudget: o.finalBudget,
 			Attrs:       attrs,
 		},
-		Sampler: procfs.NewReader(),
+		Sampler: procfs.NewReader(os.Getenv("GITHUB_WORKSPACE")),
 		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version),
 		Spool:   sp,
 		Connect: connect,

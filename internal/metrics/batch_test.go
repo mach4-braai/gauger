@@ -172,3 +172,50 @@ func TestFlushWithNothingQueued(t *testing.T) {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
 	}
 }
+
+func TestFilesystemUsageHasMountpointAndState(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:        time.Unix(100, 0),
+		Memory:      procfs.Memory{Total: 1000, Free: 300, Available: 600, Buffers: 50, Cached: 100, SReclaimable: 50},
+		Filesystems: []procfs.Filesystem{{Mountpoint: "/", UsedBytes: 2000, FreeBytes: 8000}},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	used := point(t, ms["system.filesystem.usage"], "system.filesystem.state", "used", 100)
+	if used.GetAsInt() != 2000 {
+		t.Errorf("used = %d, want 2000", used.GetAsInt())
+	}
+	free := point(t, ms["system.filesystem.usage"], "system.filesystem.state", "free", 100)
+	if free.GetAsInt() != 8000 {
+		t.Errorf("free = %d, want 8000", free.GetAsInt())
+	}
+	hasMount := false
+	for _, kv := range used.Attributes {
+		if kv.Key == "system.filesystem.mountpoint" && kv.Value.GetStringValue() == "/" {
+			hasMount = true
+		}
+	}
+	if !hasMount {
+		t.Error("used point missing mountpoint attribute")
+	}
+	if ms["system.filesystem.usage"].GetSum().IsMonotonic {
+		t.Error("filesystem usage must not be monotonic")
+	}
+}
+
+func TestNoFilesystemMetricWhenStatfsFailed(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(sample(100, procfs.CPU{Idle: 100}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	if _, ok := ms["system.filesystem.usage"]; ok {
+		t.Error("got system.filesystem.usage with no filesystems in the sample")
+	}
+}
