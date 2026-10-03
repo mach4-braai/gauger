@@ -174,8 +174,6 @@ func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberD
 	}}
 }
 
-// processPoints returns the running and blocked process.state gauge points
-// for one sample.
 func (b *Batcher) processPoints(t uint64, p procfs.Processes) []*metricspb.NumberDataPoint {
 	return []*metricspb.NumberDataPoint{
 		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Running)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "running")}},

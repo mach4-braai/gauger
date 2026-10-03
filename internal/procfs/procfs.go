@@ -25,7 +25,6 @@ func (c CPU) Total() uint64 {
 	return c.User + c.Nice + c.System + c.Idle + c.IOWait + c.IRQ + c.SoftIRQ + c.Steal
 }
 
-// Processes holds the procs_running and procs_blocked counts of /proc/stat.
 type Processes struct {
 	Running, Blocked uint64
 }
