@@ -10,8 +10,6 @@ import { assetKey, defaultManifestPath, download, readManifest } from "./lib.js"
 const ENV_ALLOWLIST_NAMES = new Set(["PATH", "HOME", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]);
 const ENV_ALLOWLIST_PREFIXES = ["GITHUB_", "RUNNER_"];
 
-// launchEnv drops the step's own env, including ACTIONS_RUNTIME_TOKEN and any
-// secrets exported as env, before gauger is spawned.
 function launchEnv() {
   const env = {};
   for (const [name, value] of Object.entries(process.env)) {
