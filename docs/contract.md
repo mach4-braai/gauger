@@ -72,9 +72,11 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
+| `system.linux.pressure.stall.time` | monotonic sum | `us` | `system.pressure.resource`: `cpu`, `memory`, `io`; `system.pressure.type`: `some`, `full` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+- Pressure stall time comes from `/proc/pressure/{cpu,memory,io}`: the kernel's own cumulative microsecond counters since boot, but gauger counts from the job's first sample like every other sum here, not from boot. A resource is left out of the batch entirely when its file is missing, which happens on kernels built without `CONFIG_PSI`. Current kernels write a `full` line for `cpu` that always reads zero, since a stall of every runnable task also stalls the thing that would resume them; older kernels omit that line instead. Either way, gauger only sends `system.pressure.type=full` for `cpu` when the kernel's file has the line.
 
 ## Fallback artifact
 

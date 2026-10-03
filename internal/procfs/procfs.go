@@ -43,6 +43,12 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
+type Pressure struct {
+	Resource string
+	Some     uint64
+	Full     *uint64
+}
+
 // Sample is one reading of every source.
 type Sample struct {
 	Time       time.Time
@@ -50,6 +56,7 @@ type Sample struct {
 	Memory     Memory
 	Disks      []Disk
 	Interfaces []Interface
+	Pressure   []Pressure
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
@@ -81,6 +88,9 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 		return Sample{}, err
 	}
 	if s.Interfaces, err = r.netdev(); err != nil {
+		return Sample{}, err
+	}
+	if s.Pressure, err = r.pressure(); err != nil {
 		return Sample{}, err
 	}
 	return s, nil
@@ -239,4 +249,61 @@ func (r *Reader) netdev() ([]Interface, error) {
 		return all, nil
 	}
 	return hardware, nil
+}
+
+func (r *Reader) pressure() ([]Pressure, error) {
+	var all []Pressure
+	for _, resource := range []string{"cpu", "memory", "io"} {
+		p, ok, err := r.pressureFile(resource)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			all = append(all, p)
+		}
+	}
+	return all, nil
+}
+
+func (r *Reader) pressureFile(resource string) (Pressure, bool, error) {
+	data, err := os.ReadFile(filepath.Join(r.Proc, "pressure", resource))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Pressure{}, false, nil
+		}
+		return Pressure{}, false, err
+	}
+	p := Pressure{Resource: resource}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		kind, rest, ok := strings.Cut(line, " ")
+		if !ok {
+			return Pressure{}, false, fmt.Errorf("unexpected line in /proc/pressure/%s: %q", resource, line)
+		}
+		total, err := pressureTotal(rest)
+		if err != nil {
+			return Pressure{}, false, fmt.Errorf("parse /proc/pressure/%s %s: %w", resource, kind, err)
+		}
+		switch kind {
+		case "some":
+			p.Some = total
+		case "full":
+			p.Full = &total
+		default:
+			return Pressure{}, false, fmt.Errorf("unexpected line in /proc/pressure/%s: %q", resource, line)
+		}
+	}
+	return p, true, nil
+}
+
+func pressureTotal(fields string) (uint64, error) {
+	for _, kv := range strings.Fields(fields) {
+		if k, v, ok := strings.Cut(kv, "="); ok && k == "total" {
+			return strconv.ParseUint(v, 10, 64)
+		}
+	}
+	return 0, errors.New("no total field")
 }

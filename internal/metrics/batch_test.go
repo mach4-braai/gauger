@@ -172,3 +172,86 @@ func TestFlushWithNothingQueued(t *testing.T) {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
 	}
 }
+
+func TestFlushIncludesPressureStallTime(t *testing.T) {
+	memFull1, memFull2 := uint64(50), uint64(70)
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		CPU:    procfs.CPU{Idle: 100},
+		Memory: procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{
+			{Resource: "cpu", Some: 500000},
+			{Resource: "memory", Some: 300, Full: &memFull1},
+		},
+	})
+	b.Add(procfs.Sample{
+		Time:   time.Unix(101, 0),
+		CPU:    procfs.CPU{User: 1, Idle: 100},
+		Memory: procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{
+			{Resource: "cpu", Some: 500200},
+			{Resource: "memory", Some: 340, Full: &memFull2},
+		},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.linux.pressure.stall.time"]
+	if m == nil {
+		t.Fatal("no system.linux.pressure.stall.time metric")
+	}
+	if m.Unit != "us" {
+		t.Errorf("unit = %q, want us", m.Unit)
+	}
+	if !m.GetSum().IsMonotonic {
+		t.Error("pressure stall time must be monotonic")
+	}
+	if got := point(t, m, "system.pressure.resource", "cpu", 100).GetAsInt(); got != 0 {
+		t.Errorf("cpu some at first sample = %d, want 0", got)
+	}
+	if got := point(t, m, "system.pressure.resource", "cpu", 101).GetAsInt(); got != 200 {
+		t.Errorf("cpu some at second sample = %d, want 200", got)
+	}
+	if got := point(t, m, "system.pressure.resource", "memory", 101).GetAsInt(); got != 40 {
+		t.Errorf("memory some at second sample = %d, want 40", got)
+	}
+	cpuPoints := 0
+	for _, p := range m.GetSum().DataPoints {
+		for _, kv := range p.Attributes {
+			if kv.Key == "system.pressure.resource" && kv.Value.GetStringValue() == "cpu" {
+				cpuPoints++
+			}
+		}
+	}
+	if cpuPoints != 2 {
+		t.Errorf("cpu has %d pressure points, want 2 (one some per sample, no full)", cpuPoints)
+	}
+}
+
+func TestPressureCounterResetsWhenItGoesBackwards(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:     time.Unix(100, 0),
+		CPU:      procfs.CPU{Idle: 100},
+		Memory:   procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{{Resource: "io", Some: 900000}},
+	})
+	b.Add(procfs.Sample{
+		Time:     time.Unix(101, 0),
+		CPU:      procfs.CPU{User: 1, Idle: 100},
+		Memory:   procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{{Resource: "io", Some: 100}},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.linux.pressure.stall.time"]
+	if got := point(t, m, "system.pressure.resource", "io", 101).GetAsInt(); got != 0 {
+		t.Errorf("io some after a backwards counter = %d, want 0 (base reset)", got)
+	}
+}

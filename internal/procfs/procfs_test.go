@@ -35,6 +35,16 @@ const netdev = `Inter-|   Receive                                               
 docker0:   3000      30    0    0    0     0          0         0     4000      40    0    0    0     0       0          0
 `
 
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fixture(t *testing.T, withDevices bool) *Reader {
 	t.Helper()
 	root := t.TempDir()
@@ -45,13 +55,7 @@ func fixture(t *testing.T, withDevices bool) *Reader {
 		"proc/net/dev":   netdev,
 	}
 	for path, content := range files {
-		full := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(root, path), content)
 	}
 	dirs := []string{"sys/block/loop0", "sys/block/sda", "sys/block/nvme0n1", "sys/class/net/lo", "sys/class/net/docker0", "sys/class/net/eth0"}
 	if withDevices {
@@ -114,5 +118,48 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func TestReadIncludesPressureWhenPresent(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00 total=681245\n")
+	writeFile(t, filepath.Join(r.Proc, "pressure/memory"),
+		"some avg10=2.30 avg60=0.50 avg300=0.00 total=100000\nfull avg10=1.20 avg60=0.10 avg300=0.00 total=50000\n")
+	writeFile(t, filepath.Join(r.Proc, "pressure/io"),
+		"some avg10=10.00 avg60=5.00 avg300=0.00 total=900000\nfull avg10=3.00 avg60=1.00 avg300=0.00 total=300000\n")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	memFull, ioFull := uint64(50000), uint64(300000)
+	want := []Pressure{
+		{Resource: "cpu", Some: 681245},
+		{Resource: "memory", Some: 100000, Full: &memFull},
+		{Resource: "io", Some: 900000, Full: &ioFull},
+	}
+	if !reflect.DeepEqual(got.Pressure, want) {
+		t.Fatalf("Pressure = %+v, want %+v", got.Pressure, want)
+	}
+}
+
+func TestReadSkipsPressureFileThatIsMissing(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00 total=681245\n")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Pressure{{Resource: "cpu", Some: 681245}}
+	if !reflect.DeepEqual(got.Pressure, want) {
+		t.Fatalf("Pressure = %+v, want %+v", got.Pressure, want)
+	}
+}
+
+func TestReadFailsOnMalformedPressure(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00\n")
+	if _, err := r.Read(time.Now()); err == nil {
+		t.Fatal("Read succeeded on a malformed /proc/pressure/cpu")
 	}
 }

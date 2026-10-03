@@ -21,11 +21,12 @@ type Batcher struct {
 	scope    *commonpb.InstrumentationScope
 	nproc    int64
 
-	start     uint64
-	prevCPU   *procfs.CPU
-	diskBase  map[string]procfs.Disk
-	ifaceBase map[string]procfs.Interface
-	pending   []procfs.Sample
+	start        uint64
+	prevCPU      *procfs.CPU
+	diskBase     map[string]procfs.Disk
+	ifaceBase    map[string]procfs.Interface
+	pressureBase map[string]uint64
+	pending      []procfs.Sample
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
@@ -39,11 +40,12 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		kvs = append(kvs, stringKV(a.Key, a.Value))
 	}
 	return &Batcher{
-		resource:  &resourcepb.Resource{Attributes: kvs},
-		scope:     &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
-		nproc:     int64(nproc),
-		diskBase:  map[string]procfs.Disk{},
-		ifaceBase: map[string]procfs.Interface{},
+		resource:     &resourcepb.Resource{Attributes: kvs},
+		scope:        &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
+		nproc:        int64(nproc),
+		diskBase:     map[string]procfs.Disk{},
+		ifaceBase:    map[string]procfs.Interface{},
+		pressureBase: map[string]uint64{},
 	}
 }
 
@@ -77,6 +79,7 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		diskIO    []*metricspb.NumberDataPoint
 		diskOps   []*metricspb.NumberDataPoint
 		netIO     []*metricspb.NumberDataPoint
+		pressure  []*metricspb.NumberDataPoint
 		lastTime  uint64
 		lastLimit int64
 	)
@@ -119,6 +122,15 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 				b.intPoint(t, int64(n.RxBytes-base.RxBytes), name, stringKV("network.io.direction", "receive")),
 				b.intPoint(t, int64(n.TxBytes-base.TxBytes), name, stringKV("network.io.direction", "transmit")))
 		}
+		for _, p := range s.Pressure {
+			resource := stringKV("system.pressure.resource", p.Resource)
+			someBase := b.basePressure(p.Resource+":some", p.Some)
+			pressure = append(pressure, b.intPoint(t, int64(p.Some-someBase), resource, stringKV("system.pressure.type", "some")))
+			if p.Full != nil {
+				fullBase := b.basePressure(p.Resource+":full", *p.Full)
+				pressure = append(pressure, b.intPoint(t, int64(*p.Full-fullBase), resource, stringKV("system.pressure.type", "full")))
+			}
+		}
 	}
 
 	ms := []*metricspb.Metric{
@@ -139,6 +151,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(pressure) > 0 {
+		ms = append(ms, counter("system.linux.pressure.stall.time", "us", pressure))
 	}
 
 	return &colmetricspb.ExportMetricsServiceRequest{
@@ -180,6 +195,15 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	if !ok || n.RxBytes < base.RxBytes || n.TxBytes < base.TxBytes {
 		base = n
 		b.ifaceBase[n.Name] = n
+	}
+	return base
+}
+
+func (b *Batcher) basePressure(key string, v uint64) uint64 {
+	base, ok := b.pressureBase[key]
+	if !ok || v < base {
+		base = v
+		b.pressureBase[key] = v
 	}
 	return base
 }
