@@ -6,8 +6,6 @@ import { test } from "node:test";
 
 import { endGroup, getInput, getState, info, saveState, startGroup, warning } from "../src/actions.js";
 
-// captureStdout intercepts process.stdout.write for the duration of fn and
-// returns what the action would have printed as a workflow command.
 async function captureStdout(fn) {
   const original = process.stdout.write.bind(process.stdout);
   let output = "";
