@@ -68,7 +68,7 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 	}
 }
 
-// Add queues a sample for the next flush and updates the run's peaks.
+// Add queues a sample for the next flush.
 func (b *Batcher) Add(s procfs.Sample) {
 	if b.start == 0 {
 		b.start = nanos(s.Time)
