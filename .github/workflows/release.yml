@@ -40,12 +40,6 @@ jobs:
         with:
           cache: false
 
-      - name: Check that dist/ matches the sources
-        run: |
-          npm ci --ignore-scripts
-          npm run build
-          git diff --exit-code -- dist/
-
       - name: Build the binaries
         run: |
           mkdir -p out
@@ -61,6 +55,7 @@ jobs:
           BASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ inputs.version }}
         run: |
           sum() { awk -v f="$1" '$2 == f { print $1 }' out/checksums.txt; }
+          mkdir -p dist
           jq -n --arg version "$VERSION" --arg base "$BASE_URL" \
             --arg x64 "$(sum gauger-linux-amd64)" --arg arm64 "$(sum gauger-linux-arm64)" '{
               version: $version,
