@@ -141,8 +141,13 @@ func start(t *testing.T, server, stateDir string) *exec.Cmd {
 
 func stop(t *testing.T, cmd *exec.Cmd, stateDir string) status {
 	t.Helper()
+	return stopBy(t, cmd, stateDir, func() error { return cmd.Process.Signal(syscall.SIGTERM) })
+}
+
+func stopBy(t *testing.T, cmd *exec.Cmd, stateDir string, signal func() error) status {
+	t.Helper()
 	begin := time.Now()
-	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := signal(); err != nil {
 		t.Fatal(err)
 	}
 	if err := cmd.Wait(); err != nil {
@@ -257,6 +262,22 @@ func TestStreamsAndFlushesOnSIGTERM(t *testing.T) {
 	}
 	if left := spooled(t, dir); len(left) != 0 {
 		t.Fatalf("%d batches left in the spool", len(left))
+	}
+}
+
+func TestStopsAndFlushesWhenTheStopFileAppears(t *testing.T) {
+	f := newFakeServer(t)
+	dir := t.TempDir()
+	cmd := start(t, f.URL, dir)
+	waitForBatch(t, f)
+	s := stopBy(t, cmd, dir, func() error { return os.WriteFile(filepath.Join(dir, "stop"), nil, 0o600) })
+	if !s.DoneSent || s.UnsentBatches != 0 || len(s.Warnings) != 0 {
+		t.Fatalf("status = %+v", s)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.dones) != 1 {
+		t.Fatalf("got %d dones, want 1", len(f.dones))
 	}
 }
 

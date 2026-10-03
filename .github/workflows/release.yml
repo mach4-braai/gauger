@@ -54,7 +54,13 @@ jobs:
               -ldflags "-s -w -X main.version=$VERSION" \
               -o "out/gauger-linux-$arch" ./cmd/gauger
           done
-          (cd out && sha256sum gauger-linux-* >checksums.txt && cat checksums.txt)
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -trimpath \
+            -ldflags "-s -w -X main.version=$VERSION" \
+            -o out/gauger-darwin-arm64 ./cmd/gauger
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags "-s -w -X main.version=$VERSION" \
+            -o out/gauger-windows-amd64.exe ./cmd/gauger
+          (cd out && sha256sum gauger-linux-* gauger-darwin-* gauger-windows-* >checksums.txt && cat checksums.txt)
 
       - name: Pin the binaries in dist/manifest.json
         env:
@@ -62,11 +68,14 @@ jobs:
         run: |
           sum() { awk -v f="$1" '$2 == f { print $1 }' out/checksums.txt; }
           jq -n --arg version "$VERSION" --arg base "$BASE_URL" \
-            --arg x64 "$(sum gauger-linux-amd64)" --arg arm64 "$(sum gauger-linux-arm64)" '{
+            --arg x64 "$(sum gauger-linux-amd64)" --arg arm64 "$(sum gauger-linux-arm64)" \
+            --arg darwinArm64 "$(sum gauger-darwin-arm64)" --arg windowsAmd64 "$(sum gauger-windows-amd64.exe)" '{
               version: $version,
               assets: {
                 "linux-x64": { url: "\($base)/gauger-linux-amd64", sha256: $x64 },
-                "linux-arm64": { url: "\($base)/gauger-linux-arm64", sha256: $arm64 }
+                "linux-arm64": { url: "\($base)/gauger-linux-arm64", sha256: $arm64 },
+                "darwin-arm64": { url: "\($base)/gauger-darwin-arm64", sha256: $darwinArm64 },
+                "windows-amd64": { url: "\($base)/gauger-windows-amd64.exe", sha256: $windowsAmd64 }
               }
             }' >dist/manifest.json
           cat dist/manifest.json
@@ -86,4 +95,4 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" out/gauger-linux-amd64 out/gauger-linux-arm64 out/checksums.txt --verify-tag --title "$VERSION" --generate-notes
+        run: gh release create "$VERSION" out/gauger-linux-amd64 out/gauger-linux-arm64 out/gauger-darwin-arm64 out/gauger-windows-amd64.exe out/checksums.txt --verify-tag --title "$VERSION" --generate-notes

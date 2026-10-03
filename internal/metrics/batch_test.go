@@ -67,7 +67,7 @@ func point(t *testing.T, m *metricspb.Metric, key, value string, at int64) *metr
 
 func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 	id := Identity{RunID: "11", RunAttempt: "2", Repository: "mach4-braai/gauger", Workflow: "CI", Job: "build", RunnerName: "GitHub Actions 7"}
-	b := NewBatcher(id.Attributes(), 4, "v1.2.3")
+	b := NewBatcher(id.Attributes(), 4, "v1.2.3", "linux")
 	b.Add(sample(100, procfs.CPU{User: 100, Idle: 100}, 1000, 500))
 	b.Add(sample(101, procfs.CPU{User: 130, Idle: 170}, 4000, 900))
 
@@ -117,7 +117,7 @@ func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 }
 
 func TestLaterFlushesKeepTheBaseline(t *testing.T) {
-	b := NewBatcher(nil, 1, "dev")
+	b := NewBatcher(nil, 1, "dev", "linux")
 	b.Add(sample(100, procfs.CPU{Idle: 100}, 1000, 0))
 	if _, err := b.Flush(); err != nil {
 		t.Fatal(err)
@@ -138,7 +138,7 @@ func TestLaterFlushesKeepTheBaseline(t *testing.T) {
 }
 
 func TestCPUUtilizationIsOneBusySeries(t *testing.T) {
-	b := NewBatcher(nil, 2, "dev")
+	b := NewBatcher(nil, 2, "dev", "linux")
 	b.Add(sample(100, procfs.CPU{User: 10, Idle: 10}, 0, 0))
 	b.Add(sample(101, procfs.CPU{User: 70, System: 10, Idle: 20, IOWait: 10, Steal: 10}, 0, 0))
 	data, err := b.Flush()
@@ -167,8 +167,24 @@ func cpuAt(t *testing.T, ms map[string]*metricspb.Metric, at int64) float64 {
 }
 
 func TestFlushWithNothingQueued(t *testing.T) {
-	data, err := NewBatcher(nil, 1, "dev").Flush()
+	data, err := NewBatcher(nil, 1, "dev", "linux").Flush()
 	if data != nil || err != nil {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
+	}
+}
+
+func TestOSTypeTagsTheResourceAndGatesTheLinuxOnlyMetric(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev", "darwin")
+	b.Add(sample(100, procfs.CPU{User: 10, Idle: 10}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	attrs, ms := decode(t, data)
+	if attrs["os.type"] != "darwin" {
+		t.Errorf("os.type = %q, want darwin", attrs["os.type"])
+	}
+	if _, ok := ms["system.linux.memory.available"]; ok {
+		t.Error("system.linux.memory.available was sent for a non-Linux OS")
 	}
 }

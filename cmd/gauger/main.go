@@ -1,6 +1,6 @@
 // Command gauger samples runner metrics for one GitHub Actions job and streams
 // them to gauger-server over the tailnet. The action's main.js starts it and
-// post.js stops it with SIGTERM.
+// post.js stops it with SIGTERM, or on Windows by creating stop in the state dir.
 package main
 
 import (
@@ -22,7 +22,6 @@ import (
 	"github.com/mach4-braai/gauger/internal/agent"
 	"github.com/mach4-braai/gauger/internal/metrics"
 	"github.com/mach4-braai/gauger/internal/oidc"
-	"github.com/mach4-braai/gauger/internal/procfs"
 	"github.com/mach4-braai/gauger/internal/spool"
 	"github.com/mach4-braai/gauger/internal/tailnet"
 	"github.com/mach4-braai/gauger/internal/upload"
@@ -92,6 +91,9 @@ func run(o options, logger *log.Logger) Status {
 	status := Status{Version: version}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	ctx, stopOnFile := context.WithCancel(ctx)
+	defer stopOnFile()
+	go watchStopFile(ctx, filepath.Join(o.stateDir, "stop"), stopOnFile)
 
 	identity := metrics.IdentityFromEnv(os.Getenv, o.checkRunID)
 	attrs := identity.Attributes()
@@ -148,6 +150,11 @@ func run(o options, logger *log.Logger) Status {
 		}
 	}
 
+	sampler, err := newSampler()
+	if err != nil {
+		status.Warnings = []string{fmt.Sprintf("gauger could not start its sampler: %v", err)}
+		return status
+	}
 	a := &agent.Agent{
 		Config: agent.Config{
 			SampleEvery: o.sampleEvery,
@@ -155,8 +162,8 @@ func run(o options, logger *log.Logger) Status {
 			FinalBudget: o.finalBudget,
 			Attrs:       attrs,
 		},
-		Sampler: procfs.NewReader(),
-		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version),
+		Sampler: sampler,
+		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version, runtime.GOOS),
 		Spool:   sp,
 		Connect: connect,
 		Log:     logger,
@@ -193,6 +200,22 @@ func defaultHostname(id metrics.Identity) string {
 		name = strings.TrimRight(name[:63], "-")
 	}
 	return name
+}
+
+func watchStopFile(ctx context.Context, path string, stop context.CancelFunc) {
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if _, err := os.Stat(path); err == nil {
+				stop()
+				return
+			}
+		}
+	}
 }
 
 func writeStatus(path string, s Status) error {

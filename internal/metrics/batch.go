@@ -20,6 +20,7 @@ type Batcher struct {
 	resource *resourcepb.Resource
 	scope    *commonpb.InstrumentationScope
 	nproc    int64
+	linux    bool
 
 	start     uint64
 	prevCPU   *procfs.CPU
@@ -29,11 +30,11 @@ type Batcher struct {
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
-func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
+func NewBatcher(attrs []Attribute, nproc int, version, ostype string) *Batcher {
 	kvs := []*commonpb.KeyValue{
 		stringKV("service.name", "gauger"),
 		stringKV("service.version", version),
-		stringKV("os.type", "linux"),
+		stringKV("os.type", ostype),
 	}
 	for _, a := range attrs {
 		kvs = append(kvs, stringKV(a.Key, a.Value))
@@ -42,6 +43,7 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		resource:  &resourcepb.Resource{Attributes: kvs},
 		scope:     &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
 		nproc:     int64(nproc),
+		linux:     ostype == "linux",
 		diskBase:  map[string]procfs.Disk{},
 		ifaceBase: map[string]procfs.Interface{},
 	}
@@ -125,7 +127,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		upDown("system.cpu.logical.count", "{cpu}", b.intPoint(lastTime, b.nproc)),
 		upDown("system.memory.limit", "By", b.intPoint(lastTime, lastLimit)),
 		upDown("system.memory.usage", "By", memUsage...),
-		upDown("system.linux.memory.available", "By", memAvail...),
+	}
+	if b.linux {
+		ms = append(ms, upDown("system.linux.memory.available", "By", memAvail...))
 	}
 	if len(cpu) > 0 {
 		ms = append(ms, &metricspb.Metric{

@@ -70,7 +70,7 @@ func newAgent(t *testing.T, connect Connect) *Agent {
 	return &Agent{
 		Config:  Config{SampleEvery: 5 * time.Millisecond, FlushEvery: 20 * time.Millisecond, FinalBudget: 400 * time.Millisecond, Attrs: attrs},
 		Sampler: &fakeSampler{},
-		Batcher: metrics.NewBatcher(attrs, 1, "test"),
+		Batcher: metrics.NewBatcher(attrs, 1, "test", "linux"),
 		Spool:   sp,
 		Connect: connect,
 		Log:     log.New(io.Discard, "", 0),

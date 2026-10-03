@@ -140036,12 +140036,16 @@ const defaultManifestPath = external_node_path_.join(external_node_path_.dirname
 
 const STOP_TIMEOUT_MS = 30_000;
 
-const ARCHES = { x64: "linux-x64", arm64: "linux-arm64" };
+const PLATFORMS = {
+  linux: { x64: "linux-x64", arm64: "linux-arm64" },
+  darwin: { arm64: "darwin-arm64" },
+  win32: { x64: "windows-amd64" },
+};
 
 // assetKey returns the manifest key for this runner, or null when gauger does
 // not support it.
 function assetKey(platform, arch) {
-  return platform === "linux" ? (ARCHES[arch] ?? null) : null;
+  return PLATFORMS[platform]?.[arch] ?? null;
 }
 
 function readManifest(file) {
@@ -140116,9 +140120,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
 
-async function stop(pid, statusFile) {
+async function stop(pid, stateDir, statusFile) {
   try {
-    process.kill(pid, "SIGTERM");
+    if (process.platform === "win32") {
+      process.kill(pid, 0);
+      (0,external_node_fs_.writeFileSync)(external_node_path_.join(stateDir, "stop"), "");
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
   } catch (error) {
     if (error.code === "ESRCH") {
       core_warning("gauger had already exited before the post step; the log below shows why.");
@@ -140163,7 +140172,7 @@ async function post() {
   const stateDir = external_node_path_.join(dir, "state");
   const statusFile = external_node_path_.join(stateDir, "status.json");
 
-  await stop(pid, statusFile);
+  await stop(pid, stateDir, statusFile);
   report(statusFile);
 
   const log = external_node_path_.join(dir, "gauger.log");
