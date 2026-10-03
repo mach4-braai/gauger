@@ -3,10 +3,10 @@ package metrics
 import (
 	"time"
 
-	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
 	metricspb "go.opentelemetry.io/proto/otlp/metrics/v1"
 	resourcepb "go.opentelemetry.io/proto/otlp/resource/v1"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/mach4-braai/gauger/internal/procfs"
@@ -64,12 +64,18 @@ func (b *Batcher) Flush() ([]byte, error) {
 	if len(b.pending) == 0 {
 		return nil, nil
 	}
-	req := b.request()
+	rm := b.request()
 	b.pending = b.pending[:0]
-	return proto.Marshal(req)
+	body, err := proto.Marshal(rm)
+	if err != nil {
+		return nil, err
+	}
+	buf := protowire.AppendTag(nil, 1, protowire.BytesType)
+	buf = protowire.AppendBytes(buf, body)
+	return buf, nil
 }
 
-func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
+func (b *Batcher) request() *metricspb.ResourceMetrics {
 	var (
 		cpu       []*metricspb.NumberDataPoint
 		memUsage  []*metricspb.NumberDataPoint
@@ -141,11 +147,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		ms = append(ms, counter("system.network.io", "By", netIO))
 	}
 
-	return &colmetricspb.ExportMetricsServiceRequest{
-		ResourceMetrics: []*metricspb.ResourceMetrics{{
-			Resource:     b.resource,
-			ScopeMetrics: []*metricspb.ScopeMetrics{{Scope: b.scope, Metrics: ms}},
-		}},
+	return &metricspb.ResourceMetrics{
+		Resource:     b.resource,
+		ScopeMetrics: []*metricspb.ScopeMetrics{{Scope: b.scope, Metrics: ms}},
 	}
 }
 
