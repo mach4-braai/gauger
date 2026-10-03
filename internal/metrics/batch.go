@@ -38,7 +38,6 @@ type Batcher struct {
 	netTx       uint64
 }
 
-// Peaks are the run's maximum and cumulative values, for the job summary.
 type Peaks struct {
 	CPUUtilization float64 `json:"cpu_utilization"`
 	MemoryUsed     uint64  `json:"memory_used_bytes"`
@@ -78,9 +77,6 @@ func (b *Batcher) Add(s procfs.Sample) {
 	b.pending = append(b.pending, s)
 }
 
-// trackPeaks updates the run's maximum and cumulative values from one
-// sample. A counter that went backwards contributes nothing for that tick,
-// the same way baseDisk and baseIface treat a reset.
 func (b *Batcher) trackPeaks(s procfs.Sample) {
 	if prev := b.lastCPU; prev != nil && s.CPU.Total() > prev.Total() {
 		total := s.CPU.Total() - prev.Total()
@@ -112,8 +108,6 @@ func (b *Batcher) trackPeaks(s procfs.Sample) {
 	}
 }
 
-// Peaks returns the run's maximum and cumulative values so far, for the
-// status file the post step reads.
 func (b *Batcher) Peaks() Peaks {
 	return Peaks{
 		CPUUtilization: b.peakCPU,

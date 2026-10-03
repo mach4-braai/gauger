@@ -31547,11 +31547,6 @@ function mib(bytes) {
   return `${((bytes ?? 0) / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-// summaryTable renders a status.json object as a markdown table for the job
-// summary: peak CPU and memory, disk and network totals, batches sent and
-// unsent, and tailnet join time. It renders the same way whether or not
-// gauger-server was reachable, so a job with no server access still gets a
-// table.
 function summaryTable(status) {
   const peaks = status.peaks ?? {};
   const rows = [

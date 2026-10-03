@@ -201,34 +201,26 @@ func iface(name string, rx, tx uint64) procfs.Interface {
 	return procfs.Interface{Name: name, RxBytes: rx, TxBytes: tx}
 }
 
-// TestPeaksCoverFirstSampleAndACounterReset checks that the run's peaks
-// start cold at the first sample (no prior point to diff against) and that
-// a disk or interface counter going backwards contributes nothing for that
-// tick instead of wrapping into a huge total.
 func TestPeaksCoverFirstSampleAndACounterReset(t *testing.T) {
 	sampler := &scriptedSampler{samples: []procfs.Sample{
-		// First sample: establishes the baseline only.
 		{
 			CPU:        procfs.CPU{User: 100, Idle: 100},
 			Memory:     procfs.Memory{Total: 1000, Available: 400},
 			Disks:      []procfs.Disk{disk("sda", 1000, 500)},
 			Interfaces: []procfs.Interface{iface("eth0", 200, 100)},
 		},
-		// Normal increase: sets the peaks.
 		{
 			CPU:        procfs.CPU{User: 150, Idle: 130},
 			Memory:     procfs.Memory{Total: 1000, Available: 300},
 			Disks:      []procfs.Disk{disk("sda", 1500, 600)},
 			Interfaces: []procfs.Interface{iface("eth0", 500, 150)},
 		},
-		// Counter reset: every disk and interface counter goes backwards.
 		{
 			CPU:        procfs.CPU{User: 160, Idle: 140},
 			Memory:     procfs.Memory{Total: 1000, Available: 650},
 			Disks:      []procfs.Disk{disk("sda", 200, 50)},
 			Interfaces: []procfs.Interface{iface("eth0", 100, 20)},
 		},
-		// Normal increase after the reset.
 		{
 			CPU:        procfs.CPU{User: 170, Idle: 150},
 			Memory:     procfs.Memory{Total: 1000, Available: 500},
