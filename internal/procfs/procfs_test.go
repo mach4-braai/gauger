@@ -142,13 +142,8 @@ func TestProcessesRanksByCPUDeltaAndByMemory(t *testing.T) {
 	addProcess(t, r, 300, "go", 10, 5, 9000)
 
 	topCPU, topMemory := r.processes()
-	wantCPU := []Process{
-		{Executable: "compile", CPUSeconds: 6, RSSBytes: 4000 * 1024},
-		{Executable: "bash", CPUSeconds: 0.6, RSSBytes: 1000 * 1024},
-		{Executable: "go", CPUSeconds: 0.15, RSSBytes: 9000 * 1024},
-	}
-	if !reflect.DeepEqual(topCPU, wantCPU) {
-		t.Fatalf("first walk topCPU = %+v, want %+v", topCPU, wantCPU)
+	if len(topCPU) != 0 {
+		t.Fatalf("first walk topCPU = %+v, want none: there's no previous walk to diff against", topCPU)
 	}
 	wantMemory := []Process{
 		{Executable: "go", CPUSeconds: 0.15, RSSBytes: 9000 * 1024},
@@ -166,6 +161,39 @@ func TestProcessesRanksByCPUDeltaAndByMemory(t *testing.T) {
 	topCPU, _ = r.processes()
 	if len(topCPU) == 0 || topCPU[0].Executable != "bash" {
 		t.Fatalf("second walk topCPU = %+v, want bash ranked first by its CPU delta", topCPU)
+	}
+}
+
+func TestProcessesSendsNoCPUPointsOnTheFirstWalk(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 1, "runner", 1000000, 500000, 50000)
+
+	topCPU, topMemory := r.processes()
+	if len(topCPU) != 0 {
+		t.Fatalf("topCPU = %+v, want none on the first walk, even for a process with a big lifetime total", topCPU)
+	}
+	if len(topMemory) != 1 {
+		t.Fatalf("topMemory = %+v, want one entry: RSS is current, not diffed against a previous walk", topMemory)
+	}
+}
+
+func TestProcessesNewPIDOnALaterWalkSendsItsLifetimeTotal(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "compile", 500, 100, 4000)
+	r.processes()
+
+	addProcess(t, r, 100, "compile", 510, 100, 4000)
+	addProcess(t, r, 200, "go", 300, 20, 2000)
+
+	topCPU, _ := r.processes()
+	var got *Process
+	for i := range topCPU {
+		if topCPU[i].Executable == "go" {
+			got = &topCPU[i]
+		}
+	}
+	if got == nil || got.CPUSeconds != 3.2 {
+		t.Fatalf("topCPU = %+v, want go at 3.2s: its lifetime total, since it started after the previous walk", topCPU)
 	}
 }
 
@@ -195,6 +223,9 @@ func TestProcessesCPUPointIsTheDeltaNotTheLifetimeTotal(t *testing.T) {
 func TestProcessesSkipsAProcessMissingStatus(t *testing.T) {
 	r := fixture(t, true)
 	addProcess(t, r, 100, "compile", 500, 100, 4000)
+	r.processes()
+
+	addProcess(t, r, 100, "compile", 510, 100, 4000)
 	dir := filepath.Join(r.Proc, "200")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -234,7 +265,7 @@ func TestReadWalksProcessesEveryProcessWalkEvery(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantWalk := i%processWalkEvery == 0
-		if gotWalk := len(got.TopCPU) > 0; gotWalk != wantWalk {
+		if gotWalk := len(got.TopMemory) > 0; gotWalk != wantWalk {
 			t.Errorf("Read #%d: walked = %v, want %v", i, gotWalk, wantWalk)
 		}
 	}

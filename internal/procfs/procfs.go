@@ -267,6 +267,7 @@ func (r *Reader) processes() (topCPU, topMemory []Process) {
 	if err != nil {
 		return nil, nil
 	}
+	first := r.prevTicks == nil
 	type ranked struct {
 		Process
 		cpuDelta uint64
@@ -298,10 +299,12 @@ func (r *Reader) processes() (topCPU, topMemory []Process) {
 	}
 	r.prevTicks = ticks
 
-	byCPU := append([]ranked(nil), all...)
-	sort.Slice(byCPU, func(i, j int) bool { return byCPU[i].cpuDelta > byCPU[j].cpuDelta })
-	for _, e := range byCPU[:min(topProcesses, len(byCPU))] {
-		topCPU = append(topCPU, e.Process)
+	if !first {
+		byCPU := append([]ranked(nil), all...)
+		sort.Slice(byCPU, func(i, j int) bool { return byCPU[i].cpuDelta > byCPU[j].cpuDelta })
+		for _, e := range byCPU[:min(topProcesses, len(byCPU))] {
+			topCPU = append(topCPU, e.Process)
+		}
 	}
 
 	byRSS := append([]ranked(nil), all...)
