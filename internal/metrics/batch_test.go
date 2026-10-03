@@ -172,3 +172,49 @@ func TestFlushWithNothingQueued(t *testing.T) {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
 	}
 }
+
+func TestFlushIncludesPressureStallTime(t *testing.T) {
+	memFull := uint64(50)
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		CPU:    procfs.CPU{Idle: 100},
+		Memory: procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{
+			{Resource: "cpu", Some: 200},
+			{Resource: "memory", Some: 300, Full: &memFull},
+		},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.linux.pressure.stall.time"]
+	if m == nil {
+		t.Fatal("no system.linux.pressure.stall.time metric")
+	}
+	if m.Unit != "us" {
+		t.Errorf("unit = %q, want us", m.Unit)
+	}
+	if !m.GetSum().IsMonotonic {
+		t.Error("pressure stall time must be monotonic")
+	}
+	if got := point(t, m, "system.pressure.resource", "cpu", 100); got.GetAsInt() != 200 {
+		t.Errorf("cpu some = %d, want 200", got.GetAsInt())
+	}
+	if got := point(t, m, "system.pressure.resource", "memory", 100); got.GetAsInt() != 300 {
+		t.Errorf("memory some = %d, want 300", got.GetAsInt())
+	}
+	cpuPoints := 0
+	for _, p := range m.GetSum().DataPoints {
+		for _, kv := range p.Attributes {
+			if kv.Key == "system.pressure.resource" && kv.Value.GetStringValue() == "cpu" {
+				cpuPoints++
+			}
+		}
+	}
+	if cpuPoints != 1 {
+		t.Errorf("cpu has %d pressure points, want 1 (no full line)", cpuPoints)
+	}
+}
