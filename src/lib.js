@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { crc32 } from "node:zlib";
@@ -49,7 +49,14 @@ export async function download(url, sha256, file, fetchImpl = fetch) {
   if (actual !== sha256.toLowerCase()) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
-  await writeFile(file, data, { mode: 0o755 });
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, data, { mode: 0o700 });
+  try {
+    await rename(tmp, file);
+  } catch (error) {
+    await rm(tmp, { force: true });
+    throw error;
+  }
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.
