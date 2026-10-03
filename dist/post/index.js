@@ -140120,9 +140120,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 
 
-async function stop(pid, statusFile) {
+async function stop(pid, stateDir, statusFile) {
   try {
-    process.kill(pid, process.platform === "win32" ? "SIGBREAK" : "SIGTERM");
+    if (process.platform === "win32") {
+      process.kill(pid, 0);
+      (0,external_node_fs_.writeFileSync)(external_node_path_.join(stateDir, "stop"), "");
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
   } catch (error) {
     if (error.code === "ESRCH") {
       core_warning("gauger had already exited before the post step; the log below shows why.");
@@ -140167,7 +140172,7 @@ async function post() {
   const stateDir = external_node_path_.join(dir, "state");
   const statusFile = external_node_path_.join(stateDir, "status.json");
 
-  await stop(pid, statusFile);
+  await stop(pid, stateDir, statusFile);
   report(statusFile);
 
   const log = external_node_path_.join(dir, "gauger.log");

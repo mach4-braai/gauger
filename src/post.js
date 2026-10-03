@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { DefaultArtifactClient } from "@actions/artifact";
@@ -6,9 +6,14 @@ import * as core from "@actions/core";
 
 import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches } from "./lib.js";
 
-async function stop(pid, statusFile) {
+async function stop(pid, stateDir, statusFile) {
   try {
-    process.kill(pid, process.platform === "win32" ? "SIGBREAK" : "SIGTERM");
+    if (process.platform === "win32") {
+      process.kill(pid, 0);
+      writeFileSync(path.join(stateDir, "stop"), "");
+    } else {
+      process.kill(pid, "SIGTERM");
+    }
   } catch (error) {
     if (error.code === "ESRCH") {
       core.warning("gauger had already exited before the post step; the log below shows why.");
@@ -53,7 +58,7 @@ async function post() {
   const stateDir = path.join(dir, "state");
   const statusFile = path.join(stateDir, "status.json");
 
-  await stop(pid, statusFile);
+  await stop(pid, stateDir, statusFile);
   report(statusFile);
 
   const log = path.join(dir, "gauger.log");

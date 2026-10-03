@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdirSync, openSync } from "node:fs";
+import { mkdirSync, openSync, rmSync } from "node:fs";
 import path from "node:path";
 
 import * as core from "@actions/core";
@@ -26,6 +26,7 @@ async function main() {
   const dir = path.join(process.env.RUNNER_TEMP, "gauger");
   const stateDir = path.join(dir, "state");
   mkdirSync(stateDir, { recursive: true });
+  rmSync(path.join(stateDir, "stop"), { force: true });
   const binary = path.join(dir, process.platform === "win32" ? "gauger.exe" : "gauger");
   await download(asset.url, asset.sha256, binary);
 

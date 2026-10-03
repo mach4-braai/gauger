@@ -31576,6 +31576,7 @@ async function main() {
   const dir = external_node_path_namespaceObject.join(process.env.RUNNER_TEMP, "gauger");
   const stateDir = external_node_path_namespaceObject.join(dir, "state");
   (0,external_node_fs_namespaceObject.mkdirSync)(stateDir, { recursive: true });
+  (0,external_node_fs_namespaceObject.rmSync)(external_node_path_namespaceObject.join(stateDir, "stop"), { force: true });
   const binary = external_node_path_namespaceObject.join(dir, process.platform === "win32" ? "gauger.exe" : "gauger");
   await download(asset.url, asset.sha256, binary);
 

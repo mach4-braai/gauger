@@ -1,6 +1,6 @@
 // Command gauger samples runner metrics for one GitHub Actions job and streams
 // them to gauger-server over the tailnet. The action's main.js starts it and
-// post.js stops it with SIGTERM.
+// post.js stops it with SIGTERM, or on Windows by creating stop in the state dir.
 package main
 
 import (
@@ -91,6 +91,9 @@ func run(o options, logger *log.Logger) Status {
 	status := Status{Version: version}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+	ctx, stopOnFile := context.WithCancel(ctx)
+	defer stopOnFile()
+	go watchStopFile(ctx, filepath.Join(o.stateDir, "stop"), stopOnFile)
 
 	identity := metrics.IdentityFromEnv(os.Getenv, o.checkRunID)
 	attrs := identity.Attributes()
@@ -197,6 +200,22 @@ func defaultHostname(id metrics.Identity) string {
 		name = strings.TrimRight(name[:63], "-")
 	}
 	return name
+}
+
+func watchStopFile(ctx context.Context, path string, stop context.CancelFunc) {
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			if _, err := os.Stat(path); err == nil {
+				stop()
+				return
+			}
+		}
+	}
 }
 
 func writeStatus(path string, s Status) error {

@@ -4,7 +4,8 @@ node = "24.13.0"
 
 [tasks.build]
 description = "Build the gauger binary into bin/"
-run = "go build -trimpath -ldflags '-s -w' -o bin/gauger ./cmd/gauger"
+shell = "bash -c"
+run = "go build -trimpath -ldflags '-s -w' -o bin/ ./cmd/gauger"
 
 [tasks.test]
 description = "Run the unit tests"
