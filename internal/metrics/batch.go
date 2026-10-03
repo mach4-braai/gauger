@@ -200,9 +200,6 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	return base
 }
 
-// baseContainerCPU returns the cumulative CPU usage a container had when it
-// was first seen. A counter that went backwards, which happens when a
-// container ID is reused after the first one exited, resets the base.
 func (b *Batcher) baseContainerCPU(c procfs.Container) uint64 {
 	base, ok := b.containerCPUBase[c.ID]
 	if !ok || c.CPUUsec < base {

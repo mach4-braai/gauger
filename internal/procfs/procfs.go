@@ -58,8 +58,6 @@ type Reader struct {
 	Proc string
 	Sys  string
 
-	// DockerSocket is the Docker Engine API's Unix socket, used to look up
-	// container.image.name. Empty means the default /var/run/docker.sock.
 	DockerSocket string
 
 	disks      map[string]bool
@@ -72,8 +70,7 @@ func NewReader() *Reader {
 }
 
 // Read takes one sample. A failure in one source fails the whole sample, so a
-// batch never mixes complete and partial readings. Containers are best
-// effort: a runner without Docker or without cgroup v2 just has none.
+// batch never mixes complete and partial readings.
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error

@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// cgroupV2Fixture lays out a cgroup v2 unified hierarchy with no containers
-// in it yet, and returns a Reader pointed at the tree.
 func cgroupV2Fixture(t *testing.T) *Reader {
 	t.Helper()
 	root := t.TempDir()
@@ -25,7 +23,6 @@ func cgroupV2Fixture(t *testing.T) *Reader {
 	return &Reader{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys")}
 }
 
-// writeScope adds a docker-<id>.scope directory with cpu.stat and memory.current.
 func writeScope(t *testing.T, r *Reader, id string, usec, bytes uint64) {
 	t.Helper()
 	dir := filepath.Join(r.Sys, "fs/cgroup/system.slice", "docker-"+id+".scope")
@@ -77,7 +74,7 @@ func TestContainersSkipsAScopeMissingAFile(t *testing.T) {
 	dir := filepath.Join(r.Sys, "fs/cgroup/system.slice", "docker-removed.scope")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
-	} // cpu.stat and memory.current missing, as if the container exited mid-read
+	}
 
 	got := r.containers()
 	want := []Container{{ID: "abc123", CPUUsec: 1500000, MemoryBytes: 41943040}}
@@ -127,8 +124,6 @@ func TestDockerImageNameOnUnknownContainer(t *testing.T) {
 	}
 }
 
-// serveDockerSocket starts a fake Docker API on a Unix socket that answers
-// every request with body, and returns the socket path.
 func serveDockerSocket(t *testing.T, body string) string {
 	t.Helper()
 	socket := shortSocketPath(t)
@@ -143,9 +138,6 @@ func serveDockerSocket(t *testing.T, body string) string {
 	return socket
 }
 
-// shortSocketPath returns a path for a Unix socket outside of t.TempDir(),
-// whose nesting under the test name can exceed the platform's sun_path
-// length limit.
 func shortSocketPath(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "gauger")

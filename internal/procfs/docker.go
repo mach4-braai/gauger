@@ -8,15 +8,10 @@ import (
 	"time"
 )
 
-// dockerSocket is the default path of the Docker Engine API's Unix socket.
 const dockerSocket = "/var/run/docker.sock"
 
 const dockerRequestTimeout = time.Second
 
-// dockerImageName asks the Docker API for the image name a container was
-// created from. It reports ok=false, without an error, whenever the socket
-// is missing, refuses the connection, or needs permissions gauger does not
-// have: Docker is optional, and container.id alone is still useful.
 func (r *Reader) dockerImageName(id string) (string, bool) {
 	socket := r.DockerSocket
 	if socket == "" {

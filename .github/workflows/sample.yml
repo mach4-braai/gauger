@@ -39,9 +39,6 @@ jobs:
       - name: Idle for 20 s
         run: sleep 20
 
-  # Gives the container cgroup reader a docker-<id>.scope to attribute, so
-  # the UI can be checked for container.cpu.time and container.memory.usage
-  # next to the runner's own series.
   sample-container:
     name: sample container
     runs-on: ubuntu-latest
