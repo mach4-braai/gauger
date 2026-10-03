@@ -21,11 +21,12 @@ type Batcher struct {
 	scope    *commonpb.InstrumentationScope
 	nproc    int64
 
-	start     uint64
-	prevCPU   *procfs.CPU
-	diskBase  map[string]procfs.Disk
-	ifaceBase map[string]procfs.Interface
-	pending   []procfs.Sample
+	start            uint64
+	prevCPU          *procfs.CPU
+	diskBase         map[string]procfs.Disk
+	ifaceBase        map[string]procfs.Interface
+	containerCPUBase map[string]uint64
+	pending          []procfs.Sample
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
@@ -39,11 +40,12 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		kvs = append(kvs, stringKV(a.Key, a.Value))
 	}
 	return &Batcher{
-		resource:  &resourcepb.Resource{Attributes: kvs},
-		scope:     &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
-		nproc:     int64(nproc),
-		diskBase:  map[string]procfs.Disk{},
-		ifaceBase: map[string]procfs.Interface{},
+		resource:         &resourcepb.Resource{Attributes: kvs},
+		scope:            &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
+		nproc:            int64(nproc),
+		diskBase:         map[string]procfs.Disk{},
+		ifaceBase:        map[string]procfs.Interface{},
+		containerCPUBase: map[string]uint64{},
 	}
 }
 
@@ -71,14 +73,16 @@ func (b *Batcher) Flush() ([]byte, error) {
 
 func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	var (
-		cpu       []*metricspb.NumberDataPoint
-		memUsage  []*metricspb.NumberDataPoint
-		memAvail  []*metricspb.NumberDataPoint
-		diskIO    []*metricspb.NumberDataPoint
-		diskOps   []*metricspb.NumberDataPoint
-		netIO     []*metricspb.NumberDataPoint
-		lastTime  uint64
-		lastLimit int64
+		cpu          []*metricspb.NumberDataPoint
+		memUsage     []*metricspb.NumberDataPoint
+		memAvail     []*metricspb.NumberDataPoint
+		diskIO       []*metricspb.NumberDataPoint
+		diskOps      []*metricspb.NumberDataPoint
+		netIO        []*metricspb.NumberDataPoint
+		containerCPU []*metricspb.NumberDataPoint
+		containerMem []*metricspb.NumberDataPoint
+		lastTime     uint64
+		lastLimit    int64
 	)
 	for _, s := range b.pending {
 		t := nanos(s.Time)
@@ -119,6 +123,15 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 				b.intPoint(t, int64(n.RxBytes-base.RxBytes), name, stringKV("network.io.direction", "receive")),
 				b.intPoint(t, int64(n.TxBytes-base.TxBytes), name, stringKV("network.io.direction", "transmit")))
 		}
+		for _, cnt := range s.Containers {
+			base := b.baseContainerCPU(cnt)
+			attrs := []*commonpb.KeyValue{stringKV("container.id", cnt.ID)}
+			if cnt.ImageName != "" {
+				attrs = append(attrs, stringKV("container.image.name", cnt.ImageName))
+			}
+			containerCPU = append(containerCPU, b.floatPoint(t, float64(cnt.CPUUsec-base)/1e6, attrs...))
+			containerMem = append(containerMem, b.intPoint(t, int64(cnt.MemoryBytes), attrs...))
+		}
 	}
 
 	ms := []*metricspb.Metric{
@@ -139,6 +152,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(containerCPU) > 0 {
+		ms = append(ms, counter("container.cpu.time", "s", containerCPU), upDown("container.memory.usage", "By", containerMem...))
 	}
 
 	return &colmetricspb.ExportMetricsServiceRequest{
@@ -184,11 +200,32 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	return base
 }
 
+// baseContainerCPU returns the cumulative CPU usage a container had when it
+// was first seen. A counter that went backwards, which happens when a
+// container ID is reused after the first one exited, resets the base.
+func (b *Batcher) baseContainerCPU(c procfs.Container) uint64 {
+	base, ok := b.containerCPUBase[c.ID]
+	if !ok || c.CPUUsec < base {
+		base = c.CPUUsec
+		b.containerCPUBase[c.ID] = base
+	}
+	return base
+}
+
 func (b *Batcher) intPoint(t uint64, v int64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
 	return &metricspb.NumberDataPoint{
 		StartTimeUnixNano: b.start,
 		TimeUnixNano:      t,
 		Value:             &metricspb.NumberDataPoint_AsInt{AsInt: v},
+		Attributes:        attrs,
+	}
+}
+
+func (b *Batcher) floatPoint(t uint64, v float64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
+	return &metricspb.NumberDataPoint{
+		StartTimeUnixNano: b.start,
+		TimeUnixNano:      t,
+		Value:             &metricspb.NumberDataPoint_AsDouble{AsDouble: v},
 		Attributes:        attrs,
 	}
 }

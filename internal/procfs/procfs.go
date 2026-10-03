@@ -50,12 +50,17 @@ type Sample struct {
 	Memory     Memory
 	Disks      []Disk
 	Interfaces []Interface
+	Containers []Container
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
 type Reader struct {
 	Proc string
 	Sys  string
+
+	// DockerSocket is the Docker Engine API's Unix socket, used to look up
+	// container.image.name. Empty means the default /var/run/docker.sock.
+	DockerSocket string
 
 	disks      map[string]bool
 	interfaces map[string]bool
@@ -67,7 +72,8 @@ func NewReader() *Reader {
 }
 
 // Read takes one sample. A failure in one source fails the whole sample, so a
-// batch never mixes complete and partial readings.
+// batch never mixes complete and partial readings. Containers are best
+// effort: a runner without Docker or without cgroup v2 just has none.
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error
@@ -83,6 +89,7 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	if s.Interfaces, err = r.netdev(); err != nil {
 		return Sample{}, err
 	}
+	s.Containers = r.containers()
 	return s, nil
 }
 
