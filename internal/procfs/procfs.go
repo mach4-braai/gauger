@@ -191,10 +191,9 @@ func (r *Reader) diskstats() ([]Disk, error) {
 	return disks, nil
 }
 
-// hardware reports whether an interface is backed by a device and not
-// enslaved to another interface, which leaves out lo, docker0, veth pairs
-// and other bridges, and virtual functions whose traffic the parent
-// interface already counts.
+// hardware reports whether an interface is backed by a device, which leaves
+// out lo, docker0, veth pairs and other bridges that would count traffic
+// twice. It also leaves out interfaces enslaved to another interface.
 func (r *Reader) hardware(name string) bool {
 	if known, ok := r.interfaces[name]; ok {
 		return known
