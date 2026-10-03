@@ -22,6 +22,20 @@ SwapCached:            0 kB
 SReclaimable:     200000 kB
 `
 
+const cpuinfoX86 = `processor	: 0
+vendor_id	: GenuineIntel
+model name	: Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+`
+
+const cpuinfoArm64 = `processor	: 0
+BogoMIPS	: 50.00
+CPU implementer	: 0x41
+CPU architecture: 8
+CPU variant	: 0x3
+CPU part	: 0xd0c
+CPU revision	: 1
+`
+
 const diskstats = `   7       0 loop0 90 0 1800 10 0 0 0 0 0 20 10 0 0 0 0 0 0
    8       0 sda 1000 10 20000 300 500 20 8000 400 0 700 700 0 0 0 0 0 0
    8       1 sda1 900 10 18000 290 480 20 7900 390 0 690 680 0 0 0 0 0 0
@@ -114,5 +128,49 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func TestCPUModelReadsModelName(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoX86), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelFallsBackToImplementerAndPartOnArm64(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoArm64), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "0x41 0xd0c"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelEmptyWhenNeitherFieldIsPresent(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte("processor\t: 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("CPUModel = %q, want empty", got)
 	}
 }

@@ -58,6 +58,19 @@ The same keys and values are the OTLP resource attributes of every batch.
 - `gauger.metrics.scope` is always `runner`. Every value is the whole runner's usage, not one step's own usage.
 - Batches also carry `service.name` `gauger`, `service.version` and `os.type` `linux`.
 
+## Runner resource attributes
+
+Batches also carry these as OTLP resource attributes. They describe the machine, not the job, so they are not part of the lifecycle body, and gauger-server has nowhere to store them per job yet: it ignores them until it does.
+
+| Key | Source |
+|---|---|
+| `host.cpu.model.name` | `/proc/cpuinfo` `model name`, or on arm64, which has no `model name` line, `CPU implementer` and `CPU part` |
+| `os.image` | `ImageOS` |
+| `github.runner.image_version` | `ImageVersion` |
+| `github.runner.environment` | `RUNNER_ENVIRONMENT` |
+
+An empty value is left out, same as the identity attributes.
+
 ## Metrics
 
 Sampled once a second. Sums are cumulative from the first sample of the job, so every job's counters start at 0.
