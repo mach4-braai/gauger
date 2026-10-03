@@ -13,8 +13,6 @@ import { artifactName, assetKey, download, readManifest, spooledBatches, uploadA
 const tmp = () => mkdtempSync(path.join(tmpdir(), "gauger-test-"));
 
 const serve = (body, status = 200) => async () => new Response(status === 200 ? body : "nope", { status });
-// fakeRuntimeToken builds an unsigned JWT with the Actions.Results scope that
-// getBackendIds reads from ACTIONS_RUNTIME_TOKEN.
 function fakeRuntimeToken() {
   const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
   const payload = Buffer.from(

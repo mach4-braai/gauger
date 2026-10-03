@@ -31546,9 +31546,6 @@ function alive(pid) {
   }
 }
 
-// createZip stores files uncompressed, which keeps the writer to a few dozen
-// lines. The fallback artifact holds a handful of small .pb files, so the
-// size cost of skipping deflate is negligible.
 function createZip(entries) {
   const localParts = [];
   const centralParts = [];
@@ -31559,36 +31556,36 @@ function createZip(entries) {
     const crc = crc32(data) >>> 0;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4); // version needed to extract
-    local.writeUInt16LE(0, 6); // general purpose flag
-    local.writeUInt16LE(0, 8); // method: stored
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
     local.writeUInt16LE(time, 10);
     local.writeUInt16LE(date, 12);
     local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18); // compressed size
-    local.writeUInt32LE(data.length, 22); // uncompressed size
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(nameBuf.length, 26);
-    local.writeUInt16LE(0, 28); // extra length
+    local.writeUInt16LE(0, 28);
     localParts.push(local, nameBuf, data);
 
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4); // version made by
-    central.writeUInt16LE(20, 6); // version needed to extract
-    central.writeUInt16LE(0, 8); // general purpose flag
-    central.writeUInt16LE(0, 10); // method: stored
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
     central.writeUInt16LE(time, 12);
     central.writeUInt16LE(date, 14);
     central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(data.length, 20); // compressed size
-    central.writeUInt32LE(data.length, 24); // uncompressed size
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
     central.writeUInt16LE(nameBuf.length, 28);
-    central.writeUInt16LE(0, 30); // extra length
-    central.writeUInt16LE(0, 32); // comment length
-    central.writeUInt16LE(0, 34); // disk number start
-    central.writeUInt16LE(0, 36); // internal file attributes
-    central.writeUInt32LE((0o100644 << 16) >>> 0, 38); // external file attributes
-    central.writeUInt32LE(offset, 42); // local header offset
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE((0o100644 << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
     centralParts.push(central, nameBuf);
 
     offset += local.length + nameBuf.length + data.length;
@@ -31596,13 +31593,13 @@ function createZip(entries) {
   const centralDir = Buffer.concat(centralParts);
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(0, 4); // disk number
-  end.writeUInt16LE(0, 6); // disk with central dir
-  end.writeUInt16LE(entries.length, 8); // entries on this disk
-  end.writeUInt16LE(entries.length, 10); // total entries
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
   end.writeUInt32LE(centralDir.length, 12);
-  end.writeUInt32LE(offset, 16); // central dir offset
-  end.writeUInt16LE(0, 20); // comment length
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
   return Buffer.concat([...localParts, centralDir, end]);
 }
 
@@ -31612,8 +31609,6 @@ function dosDateTime(d) {
   return { date, time };
 }
 
-// getBackendIds reads the workflow run and job run backend IDs out of the
-// ACTIONS_RUNTIME_TOKEN JWT's `scp` claim, the same way @actions/artifact does.
 function getBackendIds(runtimeToken) {
   const payload = runtimeToken.split(".")[1];
   const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -31647,9 +31642,6 @@ async function twirpRequest(resultsUrl, runtimeToken, method, body) {
   return data;
 }
 
-// uploadArtifact zips files (named by their basename) and uploads them as a
-// GitHub Actions artifact over the Actions Results Twirp API, the same
-// CreateArtifact / blob upload / FinalizeArtifact flow as @actions/artifact.
 async function uploadArtifact(name, files, retentionDays) {
   try {
     const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN;
