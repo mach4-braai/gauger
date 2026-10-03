@@ -36,5 +36,11 @@ jobs:
       - name: Busy, rebuild everything
         run: go build -a -o /dev/null ./cmd/gauger
 
+      - name: Fill 1 GiB of the workspace filesystem
+        run: |
+          fallocate -l 1G "$GITHUB_WORKSPACE/fill.bin"
+          sleep 10
+          rm -f "$GITHUB_WORKSPACE/fill.bin"
+
       - name: Idle for 20 s
         run: sleep 20

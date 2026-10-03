@@ -72,9 +72,11 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
+| `system.filesystem.usage` | non-monotonic sum | `By` | `system.filesystem.mountpoint`, `system.filesystem.state`: `used`, `free` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+- Filesystem usage covers the filesystem holding `/` and `$GITHUB_WORKSPACE`, once each when they're the same filesystem. A failing `statfs` leaves the metric out of that sample rather than failing it.
 
 ## Fallback artifact
 
