@@ -169,6 +169,29 @@ func TestProcessesRanksByCPUDeltaAndByMemory(t *testing.T) {
 	}
 }
 
+func TestProcessesCPUPointIsTheDeltaNotTheLifetimeTotal(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "idle", 100000, 50000, 2000)
+	addProcess(t, r, 200, "busy", 10, 5, 1000)
+	r.processes()
+
+	addProcess(t, r, 100, "idle", 100001, 50000, 2000)
+	addProcess(t, r, 200, "busy", 510, 205, 1000)
+
+	topCPU, _ := r.processes()
+	if len(topCPU) == 0 || topCPU[0].Executable != "busy" {
+		t.Fatalf("topCPU = %+v, want busy ranked first", topCPU)
+	}
+	if topCPU[0].CPUSeconds != 7 {
+		t.Errorf("busy CPUSeconds = %v, want 7", topCPU[0].CPUSeconds)
+	}
+	for _, p := range topCPU {
+		if p.Executable == "idle" && p.CPUSeconds > 0.1 {
+			t.Errorf("idle CPUSeconds = %v, want near 0, not its lifetime total of 1500", p.CPUSeconds)
+		}
+	}
+}
+
 func TestProcessesSkipsAProcessMissingStatus(t *testing.T) {
 	r := fixture(t, true)
 	addProcess(t, r, 100, "compile", 500, 100, 4000)

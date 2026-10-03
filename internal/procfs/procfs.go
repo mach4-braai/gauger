@@ -292,7 +292,7 @@ func (r *Reader) processes() (topCPU, topMemory []Process) {
 			delta = total - prev
 		}
 		all = append(all, ranked{
-			Process:  Process{Executable: exe, CPUSeconds: float64(total) / ticksPerSecond, RSSBytes: rssBytes},
+			Process:  Process{Executable: exe, CPUSeconds: float64(delta) / ticksPerSecond, RSSBytes: rssBytes},
 			cpuDelta: delta,
 		})
 	}
