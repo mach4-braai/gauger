@@ -22,7 +22,6 @@ import (
 	"github.com/mach4-braai/gauger/internal/agent"
 	"github.com/mach4-braai/gauger/internal/metrics"
 	"github.com/mach4-braai/gauger/internal/oidc"
-	"github.com/mach4-braai/gauger/internal/procfs"
 	"github.com/mach4-braai/gauger/internal/spool"
 	"github.com/mach4-braai/gauger/internal/tailnet"
 	"github.com/mach4-braai/gauger/internal/upload"
@@ -148,6 +147,11 @@ func run(o options, logger *log.Logger) Status {
 		}
 	}
 
+	sampler, err := newSampler()
+	if err != nil {
+		status.Warnings = []string{fmt.Sprintf("gauger could not start its sampler: %v", err)}
+		return status
+	}
 	a := &agent.Agent{
 		Config: agent.Config{
 			SampleEvery: o.sampleEvery,
@@ -155,8 +159,8 @@ func run(o options, logger *log.Logger) Status {
 			FinalBudget: o.finalBudget,
 			Attrs:       attrs,
 		},
-		Sampler: procfs.NewReader(),
-		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version),
+		Sampler: sampler,
+		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version, runtime.GOOS),
 		Spool:   sp,
 		Connect: connect,
 		Log:     logger,

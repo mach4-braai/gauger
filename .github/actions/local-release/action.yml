@@ -16,16 +16,25 @@ runs:
       run: |
         set -eu
         mise run build
+        bin=bin/gauger
+        if [ "$RUNNER_OS" = Windows ]; then bin=bin/gauger.exe; fi
+        name=$(basename "$bin")
         served="$RUNNER_TEMP/local-release"
         mkdir -p "$served"
-        cp bin/gauger "$served/gauger"
-        case "$(uname -m)" in
-          x86_64) key=linux-x64 ;;
-          aarch64) key=linux-arm64 ;;
+        cp "$bin" "$served/$name"
+        case "$RUNNER_OS-$(uname -m)" in
+          Linux-x86_64) key=linux-x64 ;;
+          Linux-aarch64) key=linux-arm64 ;;
+          macOS-arm64) key=darwin-arm64 ;;
+          Windows-x86_64) key=windows-amd64 ;;
+          *) echo "::error::unsupported runner $RUNNER_OS-$(uname -m)"; exit 1 ;;
         esac
-        jq -n --arg key "$key" --arg sum "$(sha256sum bin/gauger | cut -d' ' -f1)" \
-          '{version: "local", assets: {($key): {url: "http://127.0.0.1:8765/gauger", sha256: $sum}}}' >dist/manifest.json
-        setsid nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$served" >/dev/null 2>&1 &
-        for _ in $(seq 50); do curl -fsI http://127.0.0.1:8765/gauger >/dev/null && exit 0; sleep 0.1; done
+        jq -n --arg key "$key" --arg name "$name" --arg sum "$(sha256sum "$bin" | cut -d' ' -f1)" \
+          '{version: "local", assets: {($key): {url: "http://127.0.0.1:8765/\($name)", sha256: $sum}}}' >dist/manifest.json
+        py=python3
+        command -v "$py" >/dev/null 2>&1 || py=python
+        nohup "$py" -m http.server 8765 --bind 127.0.0.1 --directory "$served" >/dev/null 2>&1 &
+        disown
+        for _ in $(seq 50); do curl -fsI "http://127.0.0.1:8765/$name" >/dev/null && exit 0; sleep 0.1; done
         echo "::error::the local release server did not start"
         exit 1

@@ -56,7 +56,7 @@ The same keys and values are the OTLP resource attributes of every batch.
 - These are the spec's names as written, not OTel CI/CD semantic-convention names, because gauger-server parses them this way.
 - An empty value is left out. When `github.check_run_id` is missing, gauger-server matches the job on `runner.name`.
 - `gauger.metrics.scope` is always `runner`. Every value is the whole runner's usage, not one step's own usage.
-- Batches also carry `service.name` `gauger`, `service.version` and `os.type` `linux`.
+- Batches also carry `service.name` `gauger`, `service.version` and `os.type`: `linux`, `darwin` or `windows`.
 
 ## Metrics
 
@@ -75,6 +75,14 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+
+### macOS and Windows
+
+- `system.linux.memory.available` is Linux-only, per the OTel semantic convention it is named after; gauger does not send it for `darwin` or `windows`.
+- macOS and Windows report only the `used` and `free` memory states; `buffers` and `cached` are always 0, so `used = MemTotal - MemFree` there. macOS's `free` is Mach's free page count; Windows's is `GlobalMemoryStatusEx`'s `AvailPhys`.
+- `system.cpu.utilization` carries no `iowait`, `irq`, `softirq` or `steal` time on macOS or Windows; both report only `user`, `system`, `idle` (and `nice` on macOS).
+- Disks are `disk0`, `disk1`, ... on macOS (IOKit's cumulative per-disk counters, the same ones `iostat` reports as rates) and `PhysicalDrive0`, `PhysicalDrive1`, ... on Windows (`IOCTL_DISK_PERFORMANCE`).
+- Interfaces are the `en*` adapters on macOS (from `netstat`'s link-layer counters) and the non-loopback, non-tunnel adapters with a physical address on Windows (from `GetIfTable2`).
 
 ## Fallback artifact
 

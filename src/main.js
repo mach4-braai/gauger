@@ -10,7 +10,7 @@ import { assetKey, defaultManifestPath, download, readManifest } from "./lib.js"
 async function main() {
   const key = assetKey(process.platform, process.arch);
   if (!key) {
-    core.warning(`gauger supports Linux x64 and arm64 runners only, not ${process.platform}/${process.arch}; it is not sampling this job.`);
+    core.warning(`gauger supports Linux, macOS and Windows x64/arm64 runners only, not ${process.platform}/${process.arch}; it is not sampling this job.`);
     return;
   }
   if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL) {
@@ -26,7 +26,7 @@ async function main() {
   const dir = path.join(process.env.RUNNER_TEMP, "gauger");
   const stateDir = path.join(dir, "state");
   mkdirSync(stateDir, { recursive: true });
-  const binary = path.join(dir, "gauger");
+  const binary = path.join(dir, process.platform === "win32" ? "gauger.exe" : "gauger");
   await download(asset.url, asset.sha256, binary);
 
   const checkRunId = core.getInput("check-run-id");

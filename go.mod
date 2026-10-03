@@ -3,7 +3,9 @@ module github.com/mach4-braai/gauger
 go 1.27.1
 
 require (
+	github.com/ebitengine/purego v0.11.1
 	go.opentelemetry.io/proto/otlp v1.11.1
+	golang.org/x/sys v0.48.0
 	google.golang.org/protobuf v1.36.12
 	tailscale.com v1.102.5
 )
@@ -60,7 +62,6 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.15.0 // indirect

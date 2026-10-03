@@ -9,12 +9,16 @@ export const defaultManifestPath = path.join(path.dirname(fileURLToPath(import.m
 
 export const STOP_TIMEOUT_MS = 30_000;
 
-const ARCHES = { x64: "linux-x64", arm64: "linux-arm64" };
+const PLATFORMS = {
+  linux: { x64: "linux-x64", arm64: "linux-arm64" },
+  darwin: { arm64: "darwin-arm64" },
+  win32: { x64: "windows-amd64" },
+};
 
 // assetKey returns the manifest key for this runner, or null when gauger does
 // not support it.
 export function assetKey(platform, arch) {
-  return platform === "linux" ? (ARCHES[arch] ?? null) : null;
+  return PLATFORMS[platform]?.[arch] ?? null;
 }
 
 export function readManifest(file) {

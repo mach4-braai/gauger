@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  sample:
-    name: sample
+  sample-linux:
+    name: sample (linux)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,4 +37,52 @@ jobs:
         run: go build -a -o /dev/null ./cmd/gauger
 
       - name: Idle for 20 s
+        run: sleep 20
+
+  sample-macos:
+    name: sample (macos)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+      id-token: write # gauger joins the tailnet and authenticates with OIDC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
+
+      - uses: ./ # zizmor: ignore[self-repository]
+
+      - name: Busy, rebuild everything
+        run: go build -a -o /dev/null ./cmd/gauger
+
+      - name: Idle for 20 s
+        run: sleep 20
+
+  sample-windows:
+    name: sample (windows)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+      id-token: write # gauger joins the tailnet and authenticates with OIDC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
+
+      - uses: ./ # zizmor: ignore[self-repository]
+
+      - name: Busy, rebuild everything
+        shell: bash
+        run: go build -a -o NUL ./cmd/gauger
+
+      - name: Idle for 20 s
+        shell: bash
         run: sleep 20

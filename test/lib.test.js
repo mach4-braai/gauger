@@ -51,10 +51,12 @@ test("download survives a server that closes the connection after a large body",
   }
 });
 
-test("assetKey supports Linux x64 and arm64 only", () => {
+test("assetKey supports Linux x64/arm64, macOS arm64 and Windows x64", () => {
   assert.equal(assetKey("linux", "x64"), "linux-x64");
   assert.equal(assetKey("linux", "arm64"), "linux-arm64");
-  assert.equal(assetKey("darwin", "arm64"), null);
+  assert.equal(assetKey("darwin", "arm64"), "darwin-arm64");
+  assert.equal(assetKey("win32", "x64"), "windows-amd64");
+  assert.equal(assetKey("darwin", "x64"), null);
   assert.equal(assetKey("linux", "ia32"), null);
 });
 

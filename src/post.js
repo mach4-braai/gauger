@@ -8,7 +8,7 @@ import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches } from "./l
 
 async function stop(pid, statusFile) {
   try {
-    process.kill(pid, "SIGTERM");
+    process.kill(pid, process.platform === "win32" ? "SIGBREAK" : "SIGTERM");
   } catch (error) {
     if (error.code === "ESRCH") {
       core.warning("gauger had already exited before the post step; the log below shows why.");

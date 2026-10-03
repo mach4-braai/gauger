@@ -31472,12 +31472,16 @@ const defaultManifestPath = external_node_path_namespaceObject.join(external_nod
 
 const STOP_TIMEOUT_MS = 30_000;
 
-const ARCHES = { x64: "linux-x64", arm64: "linux-arm64" };
+const PLATFORMS = {
+  linux: { x64: "linux-x64", arm64: "linux-arm64" },
+  darwin: { arm64: "darwin-arm64" },
+  win32: { x64: "windows-amd64" },
+};
 
 // assetKey returns the manifest key for this runner, or null when gauger does
 // not support it.
 function assetKey(platform, arch) {
-  return platform === "linux" ? (ARCHES[arch] ?? null) : null;
+  return PLATFORMS[platform]?.[arch] ?? null;
 }
 
 function readManifest(file) {
@@ -31556,7 +31560,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function main() {
   const key = assetKey(process.platform, process.arch);
   if (!key) {
-    warning(`gauger supports Linux x64 and arm64 runners only, not ${process.platform}/${process.arch}; it is not sampling this job.`);
+    warning(`gauger supports Linux, macOS and Windows x64/arm64 runners only, not ${process.platform}/${process.arch}; it is not sampling this job.`);
     return;
   }
   if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL) {
@@ -31572,7 +31576,7 @@ async function main() {
   const dir = external_node_path_namespaceObject.join(process.env.RUNNER_TEMP, "gauger");
   const stateDir = external_node_path_namespaceObject.join(dir, "state");
   (0,external_node_fs_namespaceObject.mkdirSync)(stateDir, { recursive: true });
-  const binary = external_node_path_namespaceObject.join(dir, "gauger");
+  const binary = external_node_path_namespaceObject.join(dir, process.platform === "win32" ? "gauger.exe" : "gauger");
   await download(asset.url, asset.sha256, binary);
 
   const checkRunId = getInput("check-run-id");
