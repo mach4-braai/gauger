@@ -44,7 +44,6 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
-// Filesystem holds the usage of one mounted filesystem, as reported by statfs.
 type Filesystem struct {
 	Mountpoint           string
 	UsedBytes, FreeBytes uint64
@@ -71,15 +70,14 @@ type Reader struct {
 	interfaces map[string]bool
 }
 
-// NewReader returns a Reader for the live /proc and /sys. workspace is
-// $GITHUB_WORKSPACE, or empty when gauger isn't running inside a job.
+// NewReader returns a Reader for the live /proc and /sys.
 func NewReader(workspace string) *Reader {
 	return &Reader{Proc: "/proc", Sys: "/sys", Root: "/", Workspace: workspace}
 }
 
 // Read takes one sample. A failure in cpu, memory, disk or network fails the
-// whole sample, so a batch never mixes complete and partial readings.
-// Filesystem usage is best effort: a failing statfs just leaves it out.
+// whole sample, so a batch never mixes complete and partial readings. A
+// failing statfs only skips filesystem usage.
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error
@@ -254,9 +252,6 @@ func (r *Reader) netdev() ([]Interface, error) {
 	return hardware, nil
 }
 
-// filesystems reports the usage of the filesystem holding Root and, if
-// different, the one holding Workspace. A path that fails statfs is left
-// out rather than failing the sample.
 func (r *Reader) filesystems() []Filesystem {
 	paths := []string{r.Root}
 	if r.Workspace != "" && r.Workspace != r.Root {
