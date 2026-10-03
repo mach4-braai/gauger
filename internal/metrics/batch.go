@@ -23,6 +23,7 @@ type Batcher struct {
 
 	start     uint64
 	prevCPU   *procfs.CPU
+	cpuBase   *procfs.CPU
 	diskBase  map[string]procfs.Disk
 	ifaceBase map[string]procfs.Interface
 	pending   []procfs.Sample
@@ -72,6 +73,7 @@ func (b *Batcher) Flush() ([]byte, error) {
 func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	var (
 		cpu       []*metricspb.NumberDataPoint
+		cpuTime   []*metricspb.NumberDataPoint
 		memUsage  []*metricspb.NumberDataPoint
 		memAvail  []*metricspb.NumberDataPoint
 		diskIO    []*metricspb.NumberDataPoint
@@ -90,6 +92,8 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		}
 		c := s.CPU
 		b.prevCPU = &c
+
+		cpuTime = append(cpuTime, b.cpuTimePoints(t, s.CPU)...)
 
 		m := s.Memory
 		cached := m.Cached + m.SReclaimable
@@ -134,6 +138,9 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: cpu}},
 		})
 	}
+	if len(cpuTime) > 0 {
+		ms = append(ms, counter("system.cpu.time", "s", cpuTime))
+	}
 	if len(diskIO) > 0 {
 		ms = append(ms, counter("system.disk.io", "By", diskIO), counter("system.disk.operations", "{operation}", diskOps))
 	}
@@ -164,6 +171,27 @@ func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberD
 	}}
 }
 
+func (b *Batcher) cpuTimePoints(t uint64, cur procfs.CPU) []*metricspb.NumberDataPoint {
+	base := b.baseCPU(cur)
+	var points []*metricspb.NumberDataPoint
+	for _, mode := range []struct {
+		name      string
+		cur, base uint64
+	}{
+		{"user", cur.User, base.User},
+		{"nice", cur.Nice, base.Nice},
+		{"system", cur.System, base.System},
+		{"idle", cur.Idle, base.Idle},
+		{"iowait", cur.IOWait, base.IOWait},
+		{"interrupt", cur.IRQ, base.IRQ},
+		{"softirq", cur.SoftIRQ, base.SoftIRQ},
+		{"steal", cur.Steal, base.Steal},
+	} {
+		points = append(points, b.doublePoint(t, seconds(mode.cur-mode.base), stringKV("cpu.mode", mode.name)))
+	}
+	return points
+}
+
 // baseDisk returns the counters a disk had when it was first seen. A counter
 // that went backwards resets the base.
 func (b *Batcher) baseDisk(d procfs.Disk) procfs.Disk {
@@ -184,11 +212,30 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	return base
 }
 
+func (b *Batcher) baseCPU(c procfs.CPU) procfs.CPU {
+	base := b.cpuBase
+	if base == nil || c.User < base.User || c.Nice < base.Nice || c.System < base.System || c.Idle < base.Idle ||
+		c.IOWait < base.IOWait || c.IRQ < base.IRQ || c.SoftIRQ < base.SoftIRQ || c.Steal < base.Steal {
+		base = &c
+		b.cpuBase = base
+	}
+	return *base
+}
+
 func (b *Batcher) intPoint(t uint64, v int64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
 	return &metricspb.NumberDataPoint{
 		StartTimeUnixNano: b.start,
 		TimeUnixNano:      t,
 		Value:             &metricspb.NumberDataPoint_AsInt{AsInt: v},
+		Attributes:        attrs,
+	}
+}
+
+func (b *Batcher) doublePoint(t uint64, v float64, attrs ...*commonpb.KeyValue) *metricspb.NumberDataPoint {
+	return &metricspb.NumberDataPoint{
+		StartTimeUnixNano: b.start,
+		TimeUnixNano:      t,
+		Value:             &metricspb.NumberDataPoint_AsDouble{AsDouble: v},
 		Attributes:        attrs,
 	}
 }
@@ -222,3 +269,7 @@ func sub(a, b uint64) uint64 {
 	}
 	return a - b
 }
+
+const userHZ = 100
+
+func seconds(ticks uint64) float64 { return float64(ticks) / userHZ }
