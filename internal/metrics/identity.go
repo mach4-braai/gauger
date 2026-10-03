@@ -65,10 +65,6 @@ func (id Identity) Attributes() []Attribute {
 	return attrs
 }
 
-// Runner resource attribute keys. Unlike the identity keys above, these
-// describe the machine a job runs on rather than the job itself, so
-// gauger-server has nowhere to store them per job yet: they are resource
-// attributes on metric batches only and never appear in the lifecycle body.
 const (
 	KeyCPUModel           = "host.cpu.model.name"
 	KeyOSImage            = "os.image"
@@ -76,7 +72,6 @@ const (
 	KeyRunnerEnvironment  = "github.runner.environment"
 )
 
-// RunnerAttributes names the machine a job runs on.
 type RunnerAttributes struct {
 	CPUModel     string
 	OSImage      string
@@ -84,9 +79,6 @@ type RunnerAttributes struct {
 	Environment  string
 }
 
-// RunnerAttributesFromEnv reads the runner's image and environment from the
-// environment. cpuModel comes from /proc/cpuinfo, which is procfs's job to
-// read, not this package's.
 func RunnerAttributesFromEnv(getenv func(string) string, cpuModel string) RunnerAttributes {
 	return RunnerAttributes{
 		CPUModel:     cpuModel,
@@ -96,8 +88,6 @@ func RunnerAttributesFromEnv(getenv func(string) string, cpuModel string) Runner
 	}
 }
 
-// Attributes returns the runner attributes as OTel resource attributes.
-// Empty values are left out, same as Identity.Attributes.
 func (r RunnerAttributes) Attributes() []Attribute {
 	all := []Attribute{
 		{KeyCPUModel, r.CPUModel},

@@ -145,10 +145,6 @@ func (r *Reader) memory() (Memory, error) {
 	return m, nil
 }
 
-// CPUModel returns the CPU model from /proc/cpuinfo. x86 kernels report it
-// under "model name". arm64 kernels have no such field, only the numeric
-// "CPU implementer" and "CPU part", which still distinguish CPU generations.
-// It returns "" when neither is present.
 func (r *Reader) CPUModel() (string, error) {
 	f, err := os.Open(filepath.Join(r.Proc, "cpuinfo"))
 	if err != nil {
