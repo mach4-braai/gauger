@@ -38,9 +38,7 @@ export function readManifest(file) {
 
 // download fetches url into file and fails unless its sha256 matches. The body
 // is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure. It writes
-// to file.tmp and renames into place, so a reader never sees a half-written
-// or swapped binary.
+// the connection while a streamed body is paused for backpressure.
 export async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
