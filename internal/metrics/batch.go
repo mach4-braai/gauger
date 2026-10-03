@@ -59,9 +59,7 @@ func (b *Batcher) Add(s procfs.Sample) {
 func (b *Batcher) Len() int { return len(b.pending) }
 
 // Flush encodes the queued samples and clears the queue. It returns nil when
-// nothing is queued. The result is an OTLP ExportMetricsServiceRequest, built
-// by hand as a field-1 length-delimited ResourceMetrics without linking the
-// collector package's gRPC stubs.
+// nothing is queued.
 func (b *Batcher) Flush() ([]byte, error) {
 	if len(b.pending) == 0 {
 		return nil, nil
