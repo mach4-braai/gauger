@@ -172,3 +172,45 @@ func TestFlushWithNothingQueued(t *testing.T) {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
 	}
 }
+
+func TestFlushSendsTopProcessesFromWalkedSamplesOnly(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{Time: time.Unix(100, 0), Memory: procfs.Memory{Total: 1000}})
+	b.Add(procfs.Sample{
+		Time:   time.Unix(101, 0),
+		Memory: procfs.Memory{Total: 1000},
+		TopCPU: []procfs.Process{
+			{Executable: "compile", CPUSeconds: 6.1},
+			{Executable: "go", CPUSeconds: 0.2},
+		},
+		TopMemory: []procfs.Process{
+			{Executable: "go", RSSBytes: 9000 * 1024},
+			{Executable: "compile", RSSBytes: 4000 * 1024},
+		},
+	})
+
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+
+	cpu := ms["process.cpu.time"]
+	if cpu == nil {
+		t.Fatal("no process.cpu.time metric")
+	}
+	if got := point(t, cpu, "process.executable.name", "compile", 101).GetAsDouble(); got != 6.1 {
+		t.Errorf("compile CPU seconds = %v, want 6.1", got)
+	}
+	if got := len(cpu.GetGauge().DataPoints); got != 2 {
+		t.Errorf("got %d process.cpu.time points, want 2: the unwalked sample must send none", got)
+	}
+
+	mem := ms["process.memory.usage"]
+	if mem == nil {
+		t.Fatal("no process.memory.usage metric")
+	}
+	if got := point(t, mem, "process.executable.name", "go", 101).GetAsInt(); got != 9000*1024 {
+		t.Errorf("go RSS = %d, want %d", got, 9000*1024)
+	}
+}

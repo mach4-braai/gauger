@@ -8,12 +8,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 const sectorBytes = 512
+
+const ticksPerSecond = 100
+
+const processWalkEvery = 5
+
+const topProcesses = 5
 
 // CPU holds the aggregate "cpu" line of /proc/stat, in clock ticks.
 type CPU struct {
@@ -43,6 +50,12 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
+type Process struct {
+	Executable string
+	CPUSeconds float64
+	RSSBytes   uint64
+}
+
 // Sample is one reading of every source.
 type Sample struct {
 	Time       time.Time
@@ -50,6 +63,8 @@ type Sample struct {
 	Memory     Memory
 	Disks      []Disk
 	Interfaces []Interface
+	TopCPU     []Process
+	TopMemory  []Process
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
@@ -59,6 +74,8 @@ type Reader struct {
 
 	disks      map[string]bool
 	interfaces map[string]bool
+	prevTicks  map[int]uint64
+	walks      int
 }
 
 // NewReader returns a Reader for the live /proc and /sys.
@@ -83,6 +100,10 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	if s.Interfaces, err = r.netdev(); err != nil {
 		return Sample{}, err
 	}
+	if r.walks%processWalkEvery == 0 {
+		s.TopCPU, s.TopMemory = r.processes()
+	}
+	r.walks++
 	return s, nil
 }
 
@@ -239,4 +260,100 @@ func (r *Reader) netdev() ([]Interface, error) {
 		return all, nil
 	}
 	return hardware, nil
+}
+
+func (r *Reader) processes() (topCPU, topMemory []Process) {
+	entries, err := os.ReadDir(r.Proc)
+	if err != nil {
+		return nil, nil
+	}
+	first := r.prevTicks == nil
+	type ranked struct {
+		Process
+		cpuDelta uint64
+	}
+	ticks := make(map[int]uint64, len(entries))
+	var all []ranked
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		exe, total, ok := r.readProcessStat(pid)
+		if !ok {
+			continue
+		}
+		rssBytes, ok := r.readProcessStatus(pid)
+		if !ok {
+			continue
+		}
+		ticks[pid] = total
+		delta := total
+		if prev, ok := r.prevTicks[pid]; ok && total >= prev {
+			delta = total - prev
+		}
+		all = append(all, ranked{
+			Process:  Process{Executable: exe, CPUSeconds: float64(delta) / ticksPerSecond, RSSBytes: rssBytes},
+			cpuDelta: delta,
+		})
+	}
+	r.prevTicks = ticks
+
+	if !first {
+		byCPU := append([]ranked(nil), all...)
+		sort.Slice(byCPU, func(i, j int) bool { return byCPU[i].cpuDelta > byCPU[j].cpuDelta })
+		for _, e := range byCPU[:min(topProcesses, len(byCPU))] {
+			topCPU = append(topCPU, e.Process)
+		}
+	}
+
+	byRSS := append([]ranked(nil), all...)
+	sort.Slice(byRSS, func(i, j int) bool { return byRSS[i].RSSBytes > byRSS[j].RSSBytes })
+	for _, e := range byRSS[:min(topProcesses, len(byRSS))] {
+		topMemory = append(topMemory, e.Process)
+	}
+	return topCPU, topMemory
+}
+
+func (r *Reader) readProcessStat(pid int) (exe string, ticks uint64, ok bool) {
+	data, err := os.ReadFile(filepath.Join(r.Proc, strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return "", 0, false
+	}
+	open := bytes.IndexByte(data, '(')
+	closeParen := bytes.LastIndexByte(data, ')')
+	if open < 0 || closeParen < open {
+		return "", 0, false
+	}
+	fields := strings.Fields(string(data[closeParen+1:]))
+	if len(fields) < 13 {
+		return "", 0, false
+	}
+	utime, err1 := strconv.ParseUint(fields[11], 10, 64)
+	stime, err2 := strconv.ParseUint(fields[12], 10, 64)
+	if err1 != nil || err2 != nil {
+		return "", 0, false
+	}
+	return string(data[open+1 : closeParen]), utime + stime, true
+}
+
+func (r *Reader) readProcessStatus(pid int) (rssBytes uint64, ok bool) {
+	f, err := os.Open(filepath.Join(r.Proc, strconv.Itoa(pid), "status"))
+	if err != nil {
+		return 0, false
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 || fields[0] != "VmRSS:" {
+			continue
+		}
+		kib, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return kib * 1024, true
+	}
+	return 0, false
 }

@@ -72,9 +72,12 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
+| `process.cpu.time` | gauge, CPU seconds accrued since the previous walk, only on samples that walk `/proc/<pid>`, every 5th sample at the default rate | `s` | `process.executable.name` |
+| `process.memory.usage` | gauge, only on samples that walk `/proc/<pid>` | `By` | `process.executable.name` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+- `process.cpu.time` and `process.memory.usage` name only the top 5 processes by CPU time accrued since the previous walk, and the top 5 by current RSS, with no PID and no command line, so the series stay bounded and never leak arguments. gauger's first walk only records CPU baselines, since there's no previous walk to diff against, so that walk sends no `process.cpu.time` points; `process.memory.usage` is unaffected, since RSS is a current reading, not a diff. A PID gauger sees for the first time on a later walk is assumed to have started after the previous walk, so its lifetime CPU time is also its time since then, and its point uses that total. Several points can share the same `process.executable.name` in the same batch, and the same name can belong to a different process from one walk to the next: gauger-server must treat each point as a standalone observation, not diff or sum them across samples the way it does for the system-wide sums above.
 
 ## Fallback artifact
 

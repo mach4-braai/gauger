@@ -77,6 +77,8 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		diskIO    []*metricspb.NumberDataPoint
 		diskOps   []*metricspb.NumberDataPoint
 		netIO     []*metricspb.NumberDataPoint
+		procCPU   []*metricspb.NumberDataPoint
+		procMem   []*metricspb.NumberDataPoint
 		lastTime  uint64
 		lastLimit int64
 	)
@@ -119,6 +121,21 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 				b.intPoint(t, int64(n.RxBytes-base.RxBytes), name, stringKV("network.io.direction", "receive")),
 				b.intPoint(t, int64(n.TxBytes-base.TxBytes), name, stringKV("network.io.direction", "transmit")))
 		}
+
+		for _, p := range s.TopCPU {
+			procCPU = append(procCPU, &metricspb.NumberDataPoint{
+				TimeUnixNano: t,
+				Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: p.CPUSeconds},
+				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+			})
+		}
+		for _, p := range s.TopMemory {
+			procMem = append(procMem, &metricspb.NumberDataPoint{
+				TimeUnixNano: t,
+				Value:        &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.RSSBytes)},
+				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+			})
+		}
 	}
 
 	ms := []*metricspb.Metric{
@@ -139,6 +156,20 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(procCPU) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "process.cpu.time",
+			Unit: "s",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: procCPU}},
+		})
+	}
+	if len(procMem) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "process.memory.usage",
+			Unit: "By",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: procMem}},
+		})
 	}
 
 	return &colmetricspb.ExportMetricsServiceRequest{
