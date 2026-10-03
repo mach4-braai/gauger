@@ -31499,11 +31499,10 @@ function readManifest(file) {
   return manifest;
 }
 
-// download fetches a gzipped url into file and fails unless the sha256 of the
-// compressed bytes matches. It gunzips only after the hash check passes, and
-// returns the number of compressed bytes it read. The body is read whole:
-// undici asserts and crashes the process when a server closes the connection
-// while a streamed body is paused for backpressure.
+// download fetches a gzipped url, decompresses it into file and fails unless
+// the sha256 of the compressed bytes matches. The body is read whole: undici
+// asserts and crashes the process when a server closes the connection while
+// a streamed body is paused for backpressure.
 async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
