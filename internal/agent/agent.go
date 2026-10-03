@@ -46,15 +46,16 @@ type Config struct {
 
 // Result is what happened, for the status file that post.js reads.
 type Result struct {
-	Joined          bool     `json:"joined"`
-	StartSent       bool     `json:"start_sent"`
-	DoneSent        bool     `json:"done_sent"`
-	SentBatches     int      `json:"sent_batches"`
-	UnsentBatches   int      `json:"unsent_batches"`
-	DroppedBatches  int      `json:"dropped_batches"`
-	RejectedBatches int      `json:"rejected_batches"`
-	SampleErrors    int      `json:"sample_errors"`
-	Warnings        []string `json:"warnings"`
+	Joined          bool          `json:"joined"`
+	StartSent       bool          `json:"start_sent"`
+	DoneSent        bool          `json:"done_sent"`
+	SentBatches     int           `json:"sent_batches"`
+	UnsentBatches   int           `json:"unsent_batches"`
+	DroppedBatches  int           `json:"dropped_batches"`
+	RejectedBatches int           `json:"rejected_batches"`
+	SampleErrors    int           `json:"sample_errors"`
+	Peaks           metrics.Peaks `json:"peaks"`
+	Warnings        []string      `json:"warnings"`
 }
 
 // Agent samples on a timer, spools a batch on every flush and sends in the
@@ -255,6 +256,7 @@ func (a *Agent) result(r sendResult) Result {
 		DroppedBatches:  a.Spool.Dropped(),
 		RejectedBatches: r.rejected,
 		SampleErrors:    a.sampleErrors,
+		Peaks:           a.Batcher.Peaks(),
 		Warnings:        []string{},
 	}
 	warn := func(format string, args ...any) {

@@ -80151,7 +80151,7 @@ const _summary = new Summary();
  * @deprecated use `core.summary`
  */
 const markdownSummary = (/* unused pure expression or super */ null && (_summary));
-const summary = (/* unused pure expression or super */ null && (_summary));
+const summary = _summary;
 //# sourceMappingURL=summary.js.map
 ;// CONCATENATED MODULE: ./node_modules/@actions/core/lib/path-utils.js
 
@@ -140107,6 +140107,26 @@ function alive(pid) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function mib(bytes) {
+  return `${((bytes ?? 0) / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function summaryTable(status) {
+  const peaks = status.peaks ?? {};
+  const rows = [
+    ["Peak CPU utilization", `${((peaks.cpu_utilization ?? 0) * 100).toFixed(1)}%`],
+    ["Peak memory used", mib(peaks.memory_used_bytes)],
+    ["Disk read", mib(peaks.disk_read_bytes)],
+    ["Disk write", mib(peaks.disk_write_bytes)],
+    ["Network received", mib(peaks.network_rx_bytes)],
+    ["Network sent", mib(peaks.network_tx_bytes)],
+    ["Batches sent", `${status.sent_batches ?? 0}`],
+    ["Batches unsent", `${status.unsent_batches ?? 0}`],
+    ["Joined the tailnet", status.join_ms ? `${(status.join_ms / 1000).toFixed(1)} s` : "no"],
+  ];
+  return ["| Metric | Value |", "| --- | --- |", ...rows.map(([key, value]) => `| ${key} | ${value} |`)].join("\n");
+}
+
 ;// CONCATENATED MODULE: ./src/post.js
 
 
@@ -140138,7 +140158,7 @@ async function stop(pid, statusFile) {
   }
 }
 
-function report(statusFile) {
+async function report(statusFile) {
   if (!(0,external_node_fs_.existsSync)(statusFile)) return;
   const status = JSON.parse((0,external_node_fs_.readFileSync)(statusFile, "utf8"));
   for (const warning of status.warnings ?? []) {
@@ -140146,6 +140166,7 @@ function report(statusFile) {
   }
   const joined = status.join_ms ? `joined the tailnet in ${(status.join_ms / 1000).toFixed(1)} s, ` : "";
   info(`gauger ${status.version}: ${joined}sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
+  await summary.addHeading(`gauger ${status.version}`, 3).addRaw(summaryTable(status), true).write();
 }
 
 async function uploadUnsent(spoolDir, checkRunId) {
@@ -140164,7 +140185,7 @@ async function post() {
   const statusFile = external_node_path_.join(stateDir, "status.json");
 
   await stop(pid, statusFile);
-  report(statusFile);
+  await report(statusFile);
 
   const log = external_node_path_.join(dir, "gauger.log");
   if ((0,external_node_fs_.existsSync)(log)) {
