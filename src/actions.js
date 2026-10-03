@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { EOL } from "node:os";
 
-// escape matches @actions/core's workflow command escaping for messages.
 function escape(value) {
   return String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
