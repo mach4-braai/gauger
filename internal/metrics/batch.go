@@ -21,11 +21,12 @@ type Batcher struct {
 	scope    *commonpb.InstrumentationScope
 	nproc    int64
 
-	start     uint64
-	prevCPU   *procfs.CPU
-	diskBase  map[string]procfs.Disk
-	ifaceBase map[string]procfs.Interface
-	pending   []procfs.Sample
+	start        uint64
+	prevCPU      *procfs.CPU
+	diskBase     map[string]procfs.Disk
+	ifaceBase    map[string]procfs.Interface
+	pressureBase map[string]uint64
+	pending      []procfs.Sample
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
@@ -39,11 +40,12 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		kvs = append(kvs, stringKV(a.Key, a.Value))
 	}
 	return &Batcher{
-		resource:  &resourcepb.Resource{Attributes: kvs},
-		scope:     &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
-		nproc:     int64(nproc),
-		diskBase:  map[string]procfs.Disk{},
-		ifaceBase: map[string]procfs.Interface{},
+		resource:     &resourcepb.Resource{Attributes: kvs},
+		scope:        &commonpb.InstrumentationScope{Name: "github.com/mach4-braai/gauger", Version: version},
+		nproc:        int64(nproc),
+		diskBase:     map[string]procfs.Disk{},
+		ifaceBase:    map[string]procfs.Interface{},
+		pressureBase: map[string]uint64{},
 	}
 }
 
@@ -122,9 +124,11 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		}
 		for _, p := range s.Pressure {
 			resource := stringKV("system.pressure.resource", p.Resource)
-			pressure = append(pressure, b.intPoint(t, int64(p.Some), resource, stringKV("system.pressure.type", "some")))
+			someBase := b.basePressure(p.Resource+":some", p.Some)
+			pressure = append(pressure, b.intPoint(t, int64(p.Some-someBase), resource, stringKV("system.pressure.type", "some")))
 			if p.Full != nil {
-				pressure = append(pressure, b.intPoint(t, int64(*p.Full), resource, stringKV("system.pressure.type", "full")))
+				fullBase := b.basePressure(p.Resource+":full", *p.Full)
+				pressure = append(pressure, b.intPoint(t, int64(*p.Full-fullBase), resource, stringKV("system.pressure.type", "full")))
 			}
 		}
 	}
@@ -191,6 +195,15 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	if !ok || n.RxBytes < base.RxBytes || n.TxBytes < base.TxBytes {
 		base = n
 		b.ifaceBase[n.Name] = n
+	}
+	return base
+}
+
+func (b *Batcher) basePressure(key string, v uint64) uint64 {
+	base, ok := b.pressureBase[key]
+	if !ok || v < base {
+		base = v
+		b.pressureBase[key] = v
 	}
 	return base
 }
