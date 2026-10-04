@@ -23,6 +23,7 @@ type Batcher struct {
 
 	start            uint64
 	prevCPU          *procfs.CPU
+	cpuBase          *procfs.CPU
 	diskBase         map[string]procfs.Disk
 	ifaceBase        map[string]procfs.Interface
 	pressureBase     map[string]uint64
@@ -146,6 +147,7 @@ func (b *Batcher) Flush() ([]byte, error) {
 func (b *Batcher) request() *metricspb.ResourceMetrics {
 	var (
 		cpu          []*metricspb.NumberDataPoint
+		cpuTime      []*metricspb.NumberDataPoint
 		processes    []*metricspb.NumberDataPoint
 		memUsage     []*metricspb.NumberDataPoint
 		memAvail     []*metricspb.NumberDataPoint
@@ -170,6 +172,8 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 		}
 		c := s.CPU
 		b.prevCPU = &c
+
+		cpuTime = append(cpuTime, b.cpuTimePoints(t, s.CPU)...)
 
 		processes = append(processes, b.processPoints(t, s.Processes)...)
 
@@ -247,6 +251,9 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: cpu}},
 		})
 	}
+	if len(cpuTime) > 0 {
+		ms = append(ms, counter("system.cpu.time", "s", cpuTime))
+	}
 	if len(processes) > 0 {
 		ms = append(ms, &metricspb.Metric{
 			Name: "system.process.count",
@@ -294,6 +301,27 @@ func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberD
 	}}
 }
 
+func (b *Batcher) cpuTimePoints(t uint64, cur procfs.CPU) []*metricspb.NumberDataPoint {
+	base := b.baseCPU(cur)
+	var points []*metricspb.NumberDataPoint
+	for _, mode := range []struct {
+		name      string
+		cur, base uint64
+	}{
+		{"user", cur.User, base.User},
+		{"nice", cur.Nice, base.Nice},
+		{"system", cur.System, base.System},
+		{"idle", cur.Idle, base.Idle},
+		{"iowait", cur.IOWait, base.IOWait},
+		{"interrupt", cur.IRQ, base.IRQ},
+		{"softirq", cur.SoftIRQ, base.SoftIRQ},
+		{"steal", cur.Steal, base.Steal},
+	} {
+		points = append(points, b.floatPoint(t, seconds(mode.cur-mode.base), stringKV("cpu.mode", mode.name)))
+	}
+	return points
+}
+
 func (b *Batcher) processPoints(t uint64, p procfs.Processes) []*metricspb.NumberDataPoint {
 	return []*metricspb.NumberDataPoint{
 		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Running)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "running")}},
@@ -328,6 +356,16 @@ func (b *Batcher) basePressure(key string, v uint64) uint64 {
 		b.pressureBase[key] = v
 	}
 	return base
+}
+
+func (b *Batcher) baseCPU(c procfs.CPU) procfs.CPU {
+	base := b.cpuBase
+	if base == nil || c.User < base.User || c.Nice < base.Nice || c.System < base.System || c.Idle < base.Idle ||
+		c.IOWait < base.IOWait || c.IRQ < base.IRQ || c.SoftIRQ < base.SoftIRQ || c.Steal < base.Steal {
+		base = &c
+		b.cpuBase = base
+	}
+	return *base
 }
 
 func (b *Batcher) baseContainerCPU(c procfs.Container) uint64 {
@@ -386,3 +424,7 @@ func sub(a, b uint64) uint64 {
 	}
 	return a - b
 }
+
+const userHZ = 100
+
+func seconds(ticks uint64) float64 { return float64(ticks) / userHZ }

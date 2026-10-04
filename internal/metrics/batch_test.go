@@ -158,6 +158,60 @@ func TestCPUUtilizationIsOneBusySeries(t *testing.T) {
 	}
 }
 
+func TestCPUTimeIsCumulativeSecondsPerMode(t *testing.T) {
+	b := NewBatcher(nil, 2, "dev")
+	b.Add(sample(100, procfs.CPU{User: 100, Nice: 10, System: 50, Idle: 200, IOWait: 20, IRQ: 5, SoftIRQ: 5, Steal: 10}, 0, 0))
+	b.Add(sample(105, procfs.CPU{User: 150, Nice: 10, System: 80, Idle: 400, IOWait: 30, IRQ: 5, SoftIRQ: 15, Steal: 10}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.cpu.time"]
+	if !m.GetSum().IsMonotonic {
+		t.Error("system.cpu.time must be monotonic")
+	}
+	for _, mode := range []string{"user", "nice", "system", "idle", "iowait", "interrupt", "softirq", "steal"} {
+		if got := point(t, m, "cpu.mode", mode, 100).GetAsDouble(); got != 0 {
+			t.Errorf("%s at first sample = %v, want 0", mode, got)
+		}
+	}
+	for mode, want := range map[string]float64{
+		"user": 0.5, "nice": 0, "system": 0.3, "idle": 2.0, "iowait": 0.1, "interrupt": 0, "softirq": 0.1, "steal": 0,
+	} {
+		if got := point(t, m, "cpu.mode", mode, 105).GetAsDouble(); math.Abs(got-want) > 1e-9 {
+			t.Errorf("%s at second sample = %v, want %v", mode, got, want)
+		}
+	}
+}
+
+func TestCPUTimeCounterGoingBackwardsResetsTheBase(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(sample(100, procfs.CPU{User: 500, Idle: 500}, 0, 0))
+	b.Add(sample(101, procfs.CPU{User: 10, Idle: 20}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	if got := point(t, ms["system.cpu.time"], "cpu.mode", "user", 101).GetAsDouble(); got != 0 {
+		t.Errorf("user after a backwards counter = %v, want 0: the base resets to the new sample", got)
+	}
+	if got := point(t, ms["system.cpu.time"], "cpu.mode", "idle", 101).GetAsDouble(); got != 0 {
+		t.Errorf("idle after a backwards counter = %v, want 0", got)
+	}
+
+	b.Add(sample(102, procfs.CPU{User: 30, Idle: 70}, 0, 0))
+	data, err = b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms = decode(t, data)
+	if got := point(t, ms["system.cpu.time"], "cpu.mode", "user", 102).GetAsDouble(); math.Abs(got-0.2) > 1e-9 {
+		t.Errorf("user after the reset = %v, want 0.2: cumulative from the new base", got)
+	}
+}
+
 func cpuAt(t *testing.T, ms map[string]*metricspb.Metric, at int64) float64 {
 	t.Helper()
 	for _, p := range ms["system.cpu.utilization"].GetGauge().DataPoints {
