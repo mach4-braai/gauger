@@ -1,6 +1,6 @@
 # Spike results
 
-Measured on GitHub-hosted `ubuntu-24.04` and `ubuntu-26.04` runners in [run 36744327825](https://github.com/mach4-braai/gauger/actions/runs/36744327825), by `.github/workflows/spike.yml`.
+Measured on GitHub-hosted `ubuntu-24.04` and `ubuntu-26.04` runners in [run 36744327825](https://github.com/mach4-braai/gauger/actions/runs/36744327825), by the workflow and scripts in [`.github/workflows/spike.yml` and `.github/spike/` at commit 33a0ac1](https://github.com/mach4-braai/gauger/tree/33a0ac138c97e297f3a3ea71d6d40396cc6590fa/.github).
 
 ## 1. Is `job.check_run_id` valid in an action input's default?
 

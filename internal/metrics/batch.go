@@ -27,6 +27,25 @@ type Batcher struct {
 	ifaceBase        map[string]procfs.Interface
 	containerCPUBase map[string]uint64
 	pending          []procfs.Sample
+
+	lastCPU     *procfs.CPU
+	lastDisks   map[string]procfs.Disk
+	lastIfaces  map[string]procfs.Interface
+	peakCPU     float64
+	peakMemUsed uint64
+	diskRead    uint64
+	diskWrite   uint64
+	netRx       uint64
+	netTx       uint64
+}
+
+type Peaks struct {
+	CPUUtilization float64 `json:"cpu_utilization"`
+	MemoryUsed     uint64  `json:"memory_used_bytes"`
+	DiskRead       uint64  `json:"disk_read_bytes"`
+	DiskWrite      uint64  `json:"disk_write_bytes"`
+	NetworkRx      uint64  `json:"network_rx_bytes"`
+	NetworkTx      uint64  `json:"network_tx_bytes"`
 }
 
 // NewBatcher returns a Batcher that tags every export with attrs.
@@ -46,6 +65,8 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		diskBase:         map[string]procfs.Disk{},
 		ifaceBase:        map[string]procfs.Interface{},
 		containerCPUBase: map[string]uint64{},
+		lastDisks:        map[string]procfs.Disk{},
+		lastIfaces:       map[string]procfs.Interface{},
 	}
 }
 
@@ -54,7 +75,50 @@ func (b *Batcher) Add(s procfs.Sample) {
 	if b.start == 0 {
 		b.start = nanos(s.Time)
 	}
+	b.trackPeaks(s)
 	b.pending = append(b.pending, s)
+}
+
+func (b *Batcher) trackPeaks(s procfs.Sample) {
+	if prev := b.lastCPU; prev != nil && s.CPU.Total() > prev.Total() {
+		total := s.CPU.Total() - prev.Total()
+		waiting := sub(s.CPU.Idle, prev.Idle) + sub(s.CPU.IOWait, prev.IOWait)
+		if util := float64(sub(total, waiting)) / float64(total); util > b.peakCPU {
+			b.peakCPU = util
+		}
+	}
+	cpu := s.CPU
+	b.lastCPU = &cpu
+
+	if used := sub(s.Memory.Total, s.Memory.Available); used > b.peakMemUsed {
+		b.peakMemUsed = used
+	}
+
+	for _, d := range s.Disks {
+		if prev, ok := b.lastDisks[d.Name]; ok {
+			b.diskRead += sub(d.ReadBytes, prev.ReadBytes)
+			b.diskWrite += sub(d.WriteBytes, prev.WriteBytes)
+		}
+		b.lastDisks[d.Name] = d
+	}
+	for _, n := range s.Interfaces {
+		if prev, ok := b.lastIfaces[n.Name]; ok {
+			b.netRx += sub(n.RxBytes, prev.RxBytes)
+			b.netTx += sub(n.TxBytes, prev.TxBytes)
+		}
+		b.lastIfaces[n.Name] = n
+	}
+}
+
+func (b *Batcher) Peaks() Peaks {
+	return Peaks{
+		CPUUtilization: b.peakCPU,
+		MemoryUsed:     b.peakMemUsed,
+		DiskRead:       b.diskRead,
+		DiskWrite:      b.diskWrite,
+		NetworkRx:      b.netRx,
+		NetworkTx:      b.netTx,
+	}
 }
 
 // Len is the number of samples waiting for a flush.
@@ -74,8 +138,10 @@ func (b *Batcher) Flush() ([]byte, error) {
 func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	var (
 		cpu          []*metricspb.NumberDataPoint
+		processes    []*metricspb.NumberDataPoint
 		memUsage     []*metricspb.NumberDataPoint
 		memAvail     []*metricspb.NumberDataPoint
+		paging       []*metricspb.NumberDataPoint
 		diskIO       []*metricspb.NumberDataPoint
 		diskOps      []*metricspb.NumberDataPoint
 		netIO        []*metricspb.NumberDataPoint
@@ -95,6 +161,8 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		c := s.CPU
 		b.prevCPU = &c
 
+		processes = append(processes, b.processPoints(t, s.Processes)...)
+
 		m := s.Memory
 		cached := m.Cached + m.SReclaimable
 		used := sub(m.Total, m.Free+m.Buffers+cached)
@@ -105,6 +173,13 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 			memUsage = append(memUsage, b.intPoint(t, int64(st.value), stringKV("system.memory.state", st.state)))
 		}
 		memAvail = append(memAvail, b.intPoint(t, int64(m.Available)))
+
+		if m.SwapTotal > 0 {
+			swapUsed := sub(m.SwapTotal, m.SwapFree)
+			paging = append(paging,
+				b.intPoint(t, int64(swapUsed), stringKV("system.paging.state", "used")),
+				b.intPoint(t, int64(m.SwapFree), stringKV("system.paging.state", "free")))
+		}
 
 		for _, d := range s.Disks {
 			base := b.baseDisk(d)
@@ -147,11 +222,21 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: cpu}},
 		})
 	}
+	if len(processes) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "system.process.count",
+			Unit: "{process}",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: processes}},
+		})
+	}
 	if len(diskIO) > 0 {
 		ms = append(ms, counter("system.disk.io", "By", diskIO), counter("system.disk.operations", "{operation}", diskOps))
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(paging) > 0 {
+		ms = append(ms, upDown("system.paging.usage", "By", paging...))
 	}
 	if len(containerCPU) > 0 {
 		ms = append(ms, counter("container.cpu.time", "s", containerCPU), upDown("container.memory.usage", "By", containerMem...))
@@ -178,6 +263,13 @@ func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberD
 		TimeUnixNano: t,
 		Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: float64(sub(total, waiting)) / float64(total)},
 	}}
+}
+
+func (b *Batcher) processPoints(t uint64, p procfs.Processes) []*metricspb.NumberDataPoint {
+	return []*metricspb.NumberDataPoint{
+		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Running)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "running")}},
+		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Blocked)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "blocked")}},
+	}
 }
 
 // baseDisk returns the counters a disk had when it was first seen. A counter
