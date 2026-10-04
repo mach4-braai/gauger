@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-import { endGroup, getInput, getState, info, saveState, startGroup, warning } from "../src/actions.js";
+import { appendSummary, endGroup, getInput, getState, info, saveState, startGroup, warning } from "../src/actions.js";
 
 async function captureStdout(fn) {
   const original = process.stdout.write.bind(process.stdout);
@@ -64,4 +64,17 @@ test("saveState writes the multiline delimiter format to GITHUB_STATE, and getSt
     delete process.env.GITHUB_STATE;
     delete process.env.STATE_pid;
   }
+});
+
+test("appendSummary appends markdown to GITHUB_STEP_SUMMARY and fails when it is unset", () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "gauger-test-")), "summary");
+  writeFileSync(file, "earlier step\n");
+  process.env.GITHUB_STEP_SUMMARY = file;
+  try {
+    appendSummary("### gauger v1.2.3");
+    assert.equal(readFileSync(file, "utf8"), "earlier step\n### gauger v1.2.3\n");
+  } finally {
+    delete process.env.GITHUB_STEP_SUMMARY;
+  }
+  assert.throws(() => appendSummary("lost"), /GITHUB_STEP_SUMMARY is not set/);
 });

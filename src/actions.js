@@ -25,6 +25,12 @@ export function saveState(name, value) {
   appendFileSync(filePath, `${name}<<${delimiter}${EOL}${value}${EOL}${delimiter}${EOL}`, "utf8");
 }
 
+export function appendSummary(markdown) {
+  const filePath = process.env.GITHUB_STEP_SUMMARY;
+  if (!filePath) throw new Error("GITHUB_STEP_SUMMARY is not set");
+  appendFileSync(filePath, markdown + EOL, "utf8");
+}
+
 export function warning(message) {
   issueCommand("warning", message);
 }

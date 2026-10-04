@@ -3,7 +3,7 @@ import path from "node:path";
 
 import * as core from "./actions.js";
 
-import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, uploadArtifact } from "./lib.js";
+import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, summaryTable, uploadArtifact } from "./lib.js";
 
 async function stop(pid, statusFile) {
   try {
@@ -35,6 +35,7 @@ function report(statusFile) {
   }
   const joined = status.join_ms ? `joined the tailnet in ${(status.join_ms / 1000).toFixed(1)} s, ` : "";
   core.info(`gauger ${status.version}: ${joined}sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
+  core.appendSummary(`### gauger ${status.version}\n\n${summaryTable(status)}\n`);
 }
 
 async function uploadUnsent(spoolDir, checkRunId) {

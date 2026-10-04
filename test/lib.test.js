@@ -9,7 +9,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
 
-import { artifactName, assetKey, download, readManifest, spooledBatches, uploadArtifact } from "../src/lib.js";
+import { artifactName, assetKey, download, readManifest, spooledBatches, summaryTable, uploadArtifact } from "../src/lib.js";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "gauger-test-"));
 
@@ -109,6 +109,43 @@ test("spooledBatches lists complete batches in order", async () => {
     ["00000000000000000001.pb", "00000000000000000002.pb"],
   );
   assert.deepEqual(await spooledBatches(path.join(dir, "missing")), []);
+});
+
+test("summaryTable renders the unsent count when the server was unreachable", () => {
+  const table = summaryTable({
+    version: "v1.2.3",
+    sent_batches: 0,
+    unsent_batches: 4,
+    join_ms: 0,
+    peaks: { cpu_utilization: 0.42, memory_used_bytes: 1024 * 1024 },
+  });
+  assert.match(table, /\| Batches unsent \| 4 \|/);
+  assert.match(table, /\| Batches sent \| 0 \|/);
+  assert.match(table, /\| Joined the tailnet \| no \|/);
+  assert.match(table, /\| Peak CPU utilization \| 42\.0% \|/);
+  assert.match(table, /\| Peak memory used \| 1\.0 MiB \|/);
+  assert.match(table, /\| Disk read \| 0\.0 MiB \|/);
+});
+
+test("summaryTable shows the join time and totals for a healthy run", () => {
+  const table = summaryTable({
+    version: "v1.2.3",
+    sent_batches: 7,
+    unsent_batches: 0,
+    join_ms: 2500,
+    peaks: {
+      cpu_utilization: 0.8,
+      memory_used_bytes: 2 * 1024 * 1024,
+      disk_read_bytes: 5 * 1024 * 1024,
+      disk_write_bytes: 3 * 1024 * 1024,
+      network_rx_bytes: 1024 * 1024,
+      network_tx_bytes: 512 * 1024,
+    },
+  });
+  assert.match(table, /\| Batches sent \| 7 \|/);
+  assert.match(table, /\| Joined the tailnet \| 2\.5 s \|/);
+  assert.match(table, /\| Disk read \| 5\.0 MiB \|/);
+  assert.match(table, /\| Network sent \| 0\.5 MiB \|/);
 });
 
 test("uploadArtifact zips, uploads and finalizes against a fake Twirp server", async () => {
