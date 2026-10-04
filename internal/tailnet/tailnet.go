@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"tailscale.com/envknob"
 	_ "tailscale.com/feature/identityfederation"
 	"tailscale.com/tsnet"
 )
@@ -107,6 +108,7 @@ func (n *Node) server() *tsnet.Server {
 	if clientID != "" && !strings.Contains(clientID, "?") {
 		clientID += KeyAttributes
 	}
+	envknob.SetNoLogsNoSupport()
 	return &tsnet.Server{
 		Dir:           n.cfg.Dir,
 		Hostname:      n.cfg.Hostname,

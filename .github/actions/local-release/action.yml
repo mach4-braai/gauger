@@ -23,6 +23,7 @@ runs:
           x86_64) key=linux-x64 ;;
           aarch64) key=linux-arm64 ;;
         esac
+        mkdir -p dist
         jq -n --arg key "$key" --arg sum "$(sha256sum "$served/gauger.gz" | cut -d' ' -f1)" \
           '{version: "local", assets: {($key): {url: "http://127.0.0.1:8765/gauger.gz", sha256: $sum}}}' >dist/manifest.json
         setsid nohup python3 -m http.server 8765 --bind 127.0.0.1 --directory "$served" >/dev/null 2>&1 &

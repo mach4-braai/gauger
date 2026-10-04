@@ -8,14 +8,6 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "ncc build src/main.js -o dist/main --license licenses.txt && ncc build src/post.js -o dist/post --license licenses.txt",
     "test": "node --test 'test/*.test.js'"
-  },
-  "dependencies": {
-    "@actions/artifact": "6.2.1",
-    "@actions/core": "3.0.1"
-  },
-  "devDependencies": {
-    "@vercel/ncc": "0.45.0"
   }
 }
