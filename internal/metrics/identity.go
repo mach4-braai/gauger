@@ -64,3 +64,42 @@ func (id Identity) Attributes() []Attribute {
 	}
 	return attrs
 }
+
+const (
+	KeyCPUModel           = "host.cpu.model.name"
+	KeyOSImage            = "os.image"
+	KeyRunnerImageVersion = "github.runner.image_version"
+	KeyRunnerEnvironment  = "github.runner.environment"
+)
+
+type RunnerAttributes struct {
+	CPUModel     string
+	OSImage      string
+	ImageVersion string
+	Environment  string
+}
+
+func RunnerAttributesFromEnv(getenv func(string) string, cpuModel string) RunnerAttributes {
+	return RunnerAttributes{
+		CPUModel:     cpuModel,
+		OSImage:      getenv("ImageOS"),
+		ImageVersion: getenv("ImageVersion"),
+		Environment:  getenv("RUNNER_ENVIRONMENT"),
+	}
+}
+
+func (r RunnerAttributes) Attributes() []Attribute {
+	all := []Attribute{
+		{KeyCPUModel, r.CPUModel},
+		{KeyOSImage, r.OSImage},
+		{KeyRunnerImageVersion, r.ImageVersion},
+		{KeyRunnerEnvironment, r.Environment},
+	}
+	attrs := all[:0]
+	for _, a := range all {
+		if a.Value != "" {
+			attrs = append(attrs, a)
+		}
+	}
+	return attrs
+}
