@@ -136,6 +136,7 @@ func (b *Batcher) Flush() ([]byte, error) {
 func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 	var (
 		cpu       []*metricspb.NumberDataPoint
+		processes []*metricspb.NumberDataPoint
 		memUsage  []*metricspb.NumberDataPoint
 		memAvail  []*metricspb.NumberDataPoint
 		paging    []*metricspb.NumberDataPoint
@@ -155,6 +156,8 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 		}
 		c := s.CPU
 		b.prevCPU = &c
+
+		processes = append(processes, b.processPoints(t, s.Processes)...)
 
 		m := s.Memory
 		cached := m.Cached + m.SReclaimable
@@ -206,6 +209,13 @@ func (b *Batcher) request() *colmetricspb.ExportMetricsServiceRequest {
 			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: cpu}},
 		})
 	}
+	if len(processes) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "system.process.count",
+			Unit: "{process}",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: processes}},
+		})
+	}
 	if len(diskIO) > 0 {
 		ms = append(ms, counter("system.disk.io", "By", diskIO), counter("system.disk.operations", "{operation}", diskOps))
 	}
@@ -237,6 +247,13 @@ func (b *Batcher) cpuPoints(t uint64, prev, cur procfs.CPU) []*metricspb.NumberD
 		TimeUnixNano: t,
 		Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: float64(sub(total, waiting)) / float64(total)},
 	}}
+}
+
+func (b *Batcher) processPoints(t uint64, p procfs.Processes) []*metricspb.NumberDataPoint {
+	return []*metricspb.NumberDataPoint{
+		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Running)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "running")}},
+		{TimeUnixNano: t, Value: &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.Blocked)}, Attributes: []*commonpb.KeyValue{stringKV("process.state", "blocked")}},
+	}
 }
 
 // baseDisk returns the counters a disk had when it was first seen. A counter

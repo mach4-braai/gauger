@@ -25,6 +25,10 @@ func (c CPU) Total() uint64 {
 	return c.User + c.Nice + c.System + c.Idle + c.IOWait + c.IRQ + c.SoftIRQ + c.Steal
 }
 
+type Processes struct {
+	Running, Blocked uint64
+}
+
 // Memory holds /proc/meminfo values in bytes.
 type Memory struct {
 	Total, Free, Available, Buffers, Cached, SReclaimable uint64
@@ -48,6 +52,7 @@ type Interface struct {
 type Sample struct {
 	Time       time.Time
 	CPU        CPU
+	Processes  Processes
 	Memory     Memory
 	Disks      []Disk
 	Interfaces []Interface
@@ -72,7 +77,7 @@ func NewReader() *Reader {
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error
-	if s.CPU, err = r.cpu(); err != nil {
+	if s.CPU, s.Processes, err = r.stat(); err != nil {
 		return Sample{}, err
 	}
 	if s.Memory, err = r.memory(); err != nil {
@@ -87,23 +92,47 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	return s, nil
 }
 
-func (r *Reader) cpu() (CPU, error) {
+func (r *Reader) stat() (CPU, Processes, error) {
 	data, err := os.ReadFile(filepath.Join(r.Proc, "stat"))
 	if err != nil {
-		return CPU{}, err
+		return CPU{}, Processes{}, err
 	}
-	line, _, _ := bytes.Cut(data, []byte("\n"))
+	line, rest, _ := bytes.Cut(data, []byte("\n"))
 	fields := strings.Fields(string(line))
 	if len(fields) < 9 || fields[0] != "cpu" {
-		return CPU{}, fmt.Errorf("unexpected first line in /proc/stat: %q", line)
+		return CPU{}, Processes{}, fmt.Errorf("unexpected first line in /proc/stat: %q", line)
 	}
 	var v [8]uint64
 	for i := range v {
 		if v[i], err = strconv.ParseUint(fields[i+1], 10, 64); err != nil {
-			return CPU{}, fmt.Errorf("parse /proc/stat: %w", err)
+			return CPU{}, Processes{}, fmt.Errorf("parse /proc/stat: %w", err)
 		}
 	}
-	return CPU{User: v[0], Nice: v[1], System: v[2], Idle: v[3], IOWait: v[4], IRQ: v[5], SoftIRQ: v[6], Steal: v[7]}, nil
+	cpu := CPU{User: v[0], Nice: v[1], System: v[2], Idle: v[3], IOWait: v[4], IRQ: v[5], SoftIRQ: v[6], Steal: v[7]}
+
+	var procs Processes
+	dst := map[string]*uint64{
+		"procs_running": &procs.Running,
+		"procs_blocked": &procs.Blocked,
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(rest))
+	for scanner.Scan() {
+		parts := strings.Fields(scanner.Text())
+		if len(parts) < 2 {
+			continue
+		}
+		p, ok := dst[parts[0]]
+		if !ok {
+			continue
+		}
+		if *p, err = strconv.ParseUint(parts[1], 10, 64); err != nil {
+			return CPU{}, Processes{}, fmt.Errorf("parse /proc/stat %s: %w", parts[0], err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return CPU{}, Processes{}, err
+	}
+	return cpu, procs, nil
 }
 
 func (r *Reader) memory() (Memory, error) {
