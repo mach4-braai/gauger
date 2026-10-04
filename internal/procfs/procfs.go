@@ -28,6 +28,7 @@ func (c CPU) Total() uint64 {
 // Memory holds /proc/meminfo values in bytes.
 type Memory struct {
 	Total, Free, Available, Buffers, Cached, SReclaimable uint64
+	SwapTotal, SwapFree                                   uint64
 }
 
 // Disk holds the cumulative counters of one whole disk from /proc/diskstats.
@@ -119,6 +120,8 @@ func (r *Reader) memory() (Memory, error) {
 		"Buffers:":      &m.Buffers,
 		"Cached:":       &m.Cached,
 		"SReclaimable:": &m.SReclaimable,
+		"SwapTotal:":    &m.SwapTotal,
+		"SwapFree:":     &m.SwapFree,
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {

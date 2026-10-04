@@ -83,11 +83,13 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.memory.usage` | non-monotonic sum | `By` | `system.memory.state`: `used`, `free`, `buffers`, `cached` |
 | `system.memory.limit` | non-monotonic sum, once per batch (`MemTotal`) | `By` | none |
 | `system.linux.memory.available` | non-monotonic sum (`MemAvailable`) | `By` | none |
+| `system.paging.usage` | non-monotonic sum, left out when `SwapTotal` is 0 | `By` | `system.paging.state`: `used`, `free` |
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
+- `used` swap is `SwapTotal - SwapFree`.
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs, and leaves out any interface with a `/sys/class/net/<name>/master` link, such as a virtual function enslaved to a netvsc interface on Azure.
 
 ## Fallback artifact

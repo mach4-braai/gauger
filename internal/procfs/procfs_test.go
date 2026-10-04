@@ -20,6 +20,8 @@ Buffers:          100000 kB
 Cached:          3000000 kB
 SwapCached:            0 kB
 SReclaimable:     200000 kB
+SwapTotal:       2000000 kB
+SwapFree:         500000 kB
 `
 
 const cpuinfoX86 = `processor	: 0
@@ -95,6 +97,8 @@ func TestRead(t *testing.T) {
 			Buffers:      100000 * 1024,
 			Cached:       3000000 * 1024,
 			SReclaimable: 200000 * 1024,
+			SwapTotal:    2000000 * 1024,
+			SwapFree:     500000 * 1024,
 		},
 		Disks: []Disk{
 			{Name: "sda", ReadOps: 1000, ReadBytes: 20000 * 512, WriteOps: 500, WriteBytes: 8000 * 512},
@@ -161,6 +165,29 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func TestReadWithNoSwap(t *testing.T) {
+	r := fixture(t, true)
+	noSwap := `MemTotal:       16384000 kB
+MemFree:         8000000 kB
+MemAvailable:   12000000 kB
+Buffers:          100000 kB
+Cached:          3000000 kB
+SReclaimable:     200000 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+`
+	if err := os.WriteFile(filepath.Join(r.Proc, "meminfo"), []byte(noSwap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Memory.SwapTotal != 0 || got.Memory.SwapFree != 0 {
+		t.Fatalf("Memory = %+v, want no swap", got.Memory)
 	}
 }
 
