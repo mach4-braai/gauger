@@ -5,6 +5,7 @@ gauger and [gauger-server](https://github.com/mach4-braai/gauger-server) share t
 ## Transport
 
 - gauger joins the tailnet as an ephemeral `tag:gauger-ci` node and sends HTTP to `http://gauger-server:4318`. The ACL lets `tag:gauger-ci` reach only `tag:gauger-server:4318`.
+- gauger calls `envknob.SetNoLogsNoSupport()` before constructing the `tsnet.Server`, so tsnet never uploads its own logs to `log.tailscale.com`.
 - Every request carries `Authorization: Bearer <GitHub OIDC JWT>` with `aud` `gauger-server`. gauger fetches a new token at least 60 s before `exp`, so one job sends several tokens.
 
 ## Endpoints
@@ -58,6 +59,19 @@ The same keys and values are the OTLP resource attributes of every batch.
 - `gauger.metrics.scope` is always `runner`. Every value is the whole runner's usage, not one step's own usage.
 - Batches also carry `service.name` `gauger`, `service.version` and `os.type` `linux`.
 
+## Runner resource attributes
+
+Batches also carry these as OTLP resource attributes. They describe the machine, not the job, so they are not part of the lifecycle body, and gauger-server has nowhere to store them per job yet: it ignores them until it does.
+
+| Key | Source |
+|---|---|
+| `host.cpu.model.name` | `/proc/cpuinfo` `model name`, or on arm64, which has no `model name` line, `CPU implementer` and `CPU part` |
+| `os.image` | `ImageOS` |
+| `github.runner.image_version` | `ImageVersion` |
+| `github.runner.environment` | `RUNNER_ENVIRONMENT` |
+
+An empty value is left out, same as the identity attributes.
+
 ## Metrics
 
 Sampled once a second. Sums are cumulative from the first sample of the job, so every job's counters start at 0.
@@ -70,12 +84,14 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.memory.usage` | non-monotonic sum | `By` | `system.memory.state`: `used`, `free`, `buffers`, `cached` |
 | `system.memory.limit` | non-monotonic sum, once per batch (`MemTotal`) | `By` | none |
 | `system.linux.memory.available` | non-monotonic sum (`MemAvailable`) | `By` | none |
+| `system.paging.usage` | non-monotonic sum, left out when `SwapTotal` is 0 | `By` | `system.paging.state`: `used`, `free` |
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
 
 - `used` memory is `MemTotal - MemFree - Buffers - Cached - SReclaimable`, and `cached` includes `SReclaimable`, so the four states add up to `MemTotal`. For peak memory against `MemTotal`, use `MemTotal - system.linux.memory.available`.
-- Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs.
+- `used` swap is `SwapTotal - SwapFree`.
+- Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs, and leaves out any interface with a `/sys/class/net/<name>/master` link, such as a virtual function enslaved to a netvsc interface on Azure.
 
 ## Fallback artifact
 

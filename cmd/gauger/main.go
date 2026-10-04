@@ -95,6 +95,13 @@ func run(o options, logger *log.Logger) Status {
 
 	identity := metrics.IdentityFromEnv(os.Getenv, o.checkRunID)
 	attrs := identity.Attributes()
+	reader := procfs.NewReader()
+	cpuModel, cpuErr := reader.CPUModel()
+	if cpuErr != nil {
+		logger.Printf("cpu model: %v", cpuErr)
+	}
+	runnerAttrs := metrics.RunnerAttributesFromEnv(os.Getenv, cpuModel)
+	batchAttrs := append(append([]metrics.Attribute{}, attrs...), runnerAttrs.Attributes()...)
 	sp, err := spool.Open(filepath.Join(o.stateDir, "spool"), o.maxSpoolBytes)
 	if err != nil {
 		status.Warnings = []string{fmt.Sprintf("gauger could not open its buffer: %v", err)}
@@ -155,8 +162,8 @@ func run(o options, logger *log.Logger) Status {
 			FinalBudget: o.finalBudget,
 			Attrs:       attrs,
 		},
-		Sampler: procfs.NewReader(),
-		Batcher: metrics.NewBatcher(attrs, runtime.NumCPU(), version),
+		Sampler: reader,
+		Batcher: metrics.NewBatcher(batchAttrs, runtime.NumCPU(), version),
 		Spool:   sp,
 		Connect: connect,
 		Log:     logger,

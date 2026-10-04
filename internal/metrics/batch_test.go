@@ -114,6 +114,9 @@ func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 	if got := ms["system.cpu.logical.count"].GetSum().DataPoints[0].GetAsInt(); got != 4 {
 		t.Errorf("cpu count = %d, want 4", got)
 	}
+	if _, ok := ms["system.paging.usage"]; ok {
+		t.Error("system.paging.usage sent with no swap")
+	}
 }
 
 func TestLaterFlushesKeepTheBaseline(t *testing.T) {
@@ -192,5 +195,31 @@ func TestProcessCountIsAGaugePerState(t *testing.T) {
 	}
 	if got := point(t, m, "process.state", "blocked", 100).GetAsInt(); got != 1 {
 		t.Errorf("blocked = %d, want 1", got)
+	}
+}
+
+func TestFlushReportsPagingUsage(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		Memory: procfs.Memory{Total: 1000, Free: 300, Available: 600, Buffers: 50, Cached: 100, SReclaimable: 50, SwapTotal: 400, SwapFree: 150},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	paging := ms["system.paging.usage"]
+	if paging == nil {
+		t.Fatal("system.paging.usage not sent with swap in use")
+	}
+	if paging.GetSum().IsMonotonic {
+		t.Error("paging usage must not be monotonic")
+	}
+	if got := point(t, paging, "system.paging.state", "used", 100).GetAsInt(); got != 250 {
+		t.Errorf("used swap = %d, want 250", got)
+	}
+	if got := point(t, paging, "system.paging.state", "free", 100).GetAsInt(); got != 150 {
+		t.Errorf("free swap = %d, want 150", got)
 	}
 }

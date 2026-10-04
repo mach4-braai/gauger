@@ -32,6 +32,7 @@ type Processes struct {
 // Memory holds /proc/meminfo values in bytes.
 type Memory struct {
 	Total, Free, Available, Buffers, Cached, SReclaimable uint64
+	SwapTotal, SwapFree                                   uint64
 }
 
 // Disk holds the cumulative counters of one whole disk from /proc/diskstats.
@@ -148,6 +149,8 @@ func (r *Reader) memory() (Memory, error) {
 		"Buffers:":      &m.Buffers,
 		"Cached:":       &m.Cached,
 		"SReclaimable:": &m.SReclaimable,
+		"SwapTotal:":    &m.SwapTotal,
+		"SwapFree:":     &m.SwapFree,
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -172,6 +175,47 @@ func (r *Reader) memory() (Memory, error) {
 		return Memory{}, errors.New("no MemTotal in /proc/meminfo")
 	}
 	return m, nil
+}
+
+func (r *Reader) CPUModel() (string, error) {
+	f, err := os.Open(filepath.Join(r.Proc, "cpuinfo"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var modelName, implementer, part string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		switch key {
+		case "model name":
+			if modelName == "" {
+				modelName = value
+			}
+		case "CPU implementer":
+			if implementer == "" {
+				implementer = value
+			}
+		case "CPU part":
+			if part == "" {
+				part = value
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if modelName != "" {
+		return modelName, nil
+	}
+	if implementer != "" && part != "" {
+		return implementer + " " + part, nil
+	}
+	return "", nil
 }
 
 // wholeDisk reports whether name is a disk rather than a partition or a
@@ -221,7 +265,8 @@ func (r *Reader) diskstats() ([]Disk, error) {
 }
 
 // hardware reports whether an interface is backed by a device, which leaves
-// out lo, docker0, veth pairs and other bridges that would count traffic twice.
+// out lo, docker0, veth pairs and other bridges that would count traffic
+// twice. It also leaves out interfaces enslaved to another interface.
 func (r *Reader) hardware(name string) bool {
 	if known, ok := r.interfaces[name]; ok {
 		return known
@@ -230,8 +275,12 @@ func (r *Reader) hardware(name string) bool {
 		r.interfaces = map[string]bool{}
 	}
 	_, err := os.Stat(filepath.Join(r.Sys, "class", "net", name, "device"))
-	r.interfaces[name] = err == nil
-	return err == nil
+	hasDevice := err == nil
+	_, err = os.Lstat(filepath.Join(r.Sys, "class", "net", name, "master"))
+	enslaved := err == nil
+	known := hasDevice && !enslaved
+	r.interfaces[name] = known
+	return known
 }
 
 func (r *Reader) netdev() ([]Interface, error) {
