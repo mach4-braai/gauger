@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { DefaultArtifactClient } from "@actions/artifact";
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
-import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches } from "./lib.js";
+import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, summaryTable, uploadArtifact } from "./lib.js";
 
 async function stop(pid, statusFile) {
   try {
@@ -36,14 +35,16 @@ function report(statusFile) {
   }
   const joined = status.join_ms ? `joined the tailnet in ${(status.join_ms / 1000).toFixed(1)} s, ` : "";
   core.info(`gauger ${status.version}: ${joined}sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
+  core.appendSummary(`### gauger ${status.version}\n\n${summaryTable(status)}\n`);
 }
 
 async function uploadUnsent(spoolDir, checkRunId) {
   const files = await spooledBatches(spoolDir);
   if (files.length === 0) return;
   const name = artifactName(checkRunId, process.env.RUNNER_NAME);
-  await new DefaultArtifactClient().uploadArtifact(name, files, spoolDir, { retentionDays: 7 });
-  core.info(`gauger uploaded ${files.length} unsent batches as artifact ${name}.`);
+  if (await uploadArtifact(name, files, 7)) {
+    core.info(`gauger uploaded ${files.length} unsent batches as artifact ${name}.`);
+  }
 }
 
 async function post() {
