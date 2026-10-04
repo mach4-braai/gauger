@@ -1,12 +1,12 @@
 # gauger
 
-GitHub Action that samples runner CPU, memory, disk and network during a job and streams them over Tailscale to [gauger-server](https://github.com/mach4-braai/gauger-server).
+GitHub Action that samples runner CPU, memory, disk and network during a job and streams them over HTTPS to [gauger-server](https://github.com/mach4-braai/gauger-server).
 
 ## How it works
 
 - `main.js` downloads the gauger binary pinned in `dist/manifest.json`, checks its sha256, starts it detached and returns.
-- The binary samples `/proc` once a second and tags every batch with the job's identity. It joins the tailnet in the background as an ephemeral `tag:gauger-ci` node, and sends an OTLP batch every 5 s. Batches wait in a bounded buffer under `RUNNER_TEMP` until they are sent.
-- `post.js` stops the binary, which flushes, sends `done` and logs out of the tailnet. Batches it could not send go into the artifact `gauger-<check_run_id>`, kept for 7 days.
+- The binary samples `/proc` once a second and tags every batch with the job's identity. It sends an OTLP batch every 5 s to gauger-server's public runner listener, with the job's GitHub OIDC token as its only credential. Batches wait in a bounded buffer under `RUNNER_TEMP` until they are sent.
+- `post.js` stops the binary, which flushes and sends `done`. Batches it could not send go into the artifact `gauger-<check_run_id>`, kept for 7 days.
 - The values are runner-level. A step's window shows the whole runner's usage during that step, not what the step itself used.
 - gauger never fails the job. Every error is a warning.
 
@@ -39,9 +39,7 @@ git rev-list -n1 vX.Y.Z
 | Input | Default | |
 |---|---|---|
 | `check-run-id` | `${{ job.check_run_id }}` | Job ID that gauger-server matches the samples on. |
-| `server` | `http://gauger-server:4318` | gauger-server on the tailnet. |
-| `tailscale-client-id` | infra output `gauger_ci_client_id` | Tailscale federated identity for `tag:gauger-ci`. |
-| `tailscale-audience` | infra output `gauger_ci_audience` | Its OIDC audience. |
+| `server` | `https://gauger-server.taila8b8af.ts.net:10000` | gauger-server's runner listener, a Tailscale Funnel port reachable from the internet. |
 
 `docs/contract.md` is the wire contract with gauger-server. `docs/spike.md` records what the spike measured on real runners.
 

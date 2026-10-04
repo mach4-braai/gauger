@@ -59,8 +59,8 @@ jobs:
 
       - run: npm test
 
-  # Joins the real tailnet with an unknown server name, so every batch ends up
-  # in the fallback artifact that the next job checks.
+  # Sends to a server name that never resolves, so every batch ends up in the
+  # fallback artifact that the next job checks.
   action-e2e:
     name: action e2e (${{ matrix.os }})
     needs: [action]
@@ -71,7 +71,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
-      id-token: write # gauger joins the tailnet with OIDC
+      id-token: write # gauger authenticates to gauger-server with OIDC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +83,7 @@ jobs:
 
       - uses: ./ # zizmor: ignore[self-repository]
         with:
-          server: http://gauger-server-absent:4318
+          server: https://gauger-server-absent.invalid
 
       - name: Stand in for the job's own steps
         run: sleep 20

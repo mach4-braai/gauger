@@ -91,7 +91,7 @@ func TestHealthyRunSendsStartMetricsDone(t *testing.T) {
 	a := newAgent(t, func(context.Context) (Uploader, error) { return srv, nil })
 	r, _ := runFor(a, 100*time.Millisecond)
 
-	if !r.Joined || !r.StartSent || !r.DoneSent || r.SentBatches == 0 || r.UnsentBatches != 0 || len(r.Warnings) != 0 {
+	if !r.Connected || !r.StartSent || !r.DoneSent || r.SentBatches == 0 || r.UnsentBatches != 0 || len(r.Warnings) != 0 {
 		t.Fatalf("result = %+v", r)
 	}
 	if srv.calls[0] != "start" || srv.calls[len(srv.calls)-1] != "done" {
@@ -99,24 +99,6 @@ func TestHealthyRunSendsStartMetricsDone(t *testing.T) {
 	}
 	if *srv.done.UnsentBatches != 0 {
 		t.Fatalf("done reported %d unsent batches", *srv.done.UnsentBatches)
-	}
-}
-
-func TestBatchesWaitForALateJoin(t *testing.T) {
-	srv := &fakeServer{}
-	joined := make(chan struct{})
-	a := newAgent(t, func(ctx context.Context) (Uploader, error) {
-		<-joined
-		return srv, nil
-	})
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		close(joined)
-	}()
-	r, _ := runFor(a, 100*time.Millisecond)
-
-	if !r.DoneSent || r.UnsentBatches != 0 || r.SentBatches < 4 {
-		t.Fatalf("result = %+v, want every batch from before the join sent", r)
 	}
 }
 
@@ -140,18 +122,17 @@ func TestUnreachableServerLeavesBatchesForTheArtifact(t *testing.T) {
 	}
 }
 
-func TestNeverJoiningKeepsEveryBatch(t *testing.T) {
-	a := newAgent(t, func(ctx context.Context) (Uploader, error) {
-		<-ctx.Done()
-		return nil, errors.New("join the tailnet: no route to control")
+func TestNoTokenKeepsEveryBatch(t *testing.T) {
+	a := newAgent(t, func(context.Context) (Uploader, error) {
+		return nil, errors.New("ACTIONS_ID_TOKEN_REQUEST_URL is not set")
 	})
 	r, over := runFor(a, 60*time.Millisecond)
 
-	if r.Joined || r.UnsentBatches == 0 {
+	if r.Connected || r.UnsentBatches == 0 {
 		t.Fatalf("result = %+v", r)
 	}
-	if !strings.Contains(strings.Join(r.Warnings, "\n"), "no route to control") {
-		t.Fatalf("warnings = %q, want the join error", r.Warnings)
+	if !strings.Contains(strings.Join(r.Warnings, "\n"), "ACTIONS_ID_TOKEN_REQUEST_URL") {
+		t.Fatalf("warnings = %q, want the connect error", r.Warnings)
 	}
 	if over > a.Config.FinalBudget+100*time.Millisecond {
 		t.Fatalf("stopping took %s past the signal, budget is %s", over, a.Config.FinalBudget)

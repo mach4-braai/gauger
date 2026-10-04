@@ -22,7 +22,7 @@ jobs:
     permissions:
       contents: read
       actions: write # cancels its own run
-      id-token: write # gauger joins the tailnet and authenticates with OIDC
+      id-token: write # gauger authenticates to gauger-server with OIDC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,7 +34,7 @@ jobs:
 
       - uses: ./ # zizmor: ignore[self-repository]
         with:
-          server: http://gauger-server-absent:4318
+          server: https://gauger-server-absent.invalid
 
       - name: Cancel this run mid-job
         env:

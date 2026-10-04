@@ -1,5 +1,5 @@
 name: gauger
-description: Samples runner CPU, memory, disk and network during a job and streams them to gauger-server over Tailscale.
+description: Samples runner CPU, memory, disk and network during a job and streams them to gauger-server over HTTPS.
 author: mach4-braai
 branding:
   icon: activity
@@ -8,15 +8,9 @@ inputs:
   check-run-id:
     description: The job's check run ID, which gauger-server matches the samples on. When empty, it matches on the runner name.
     default: ${{ job.check_run_id }}
-  tailscale-client-id:
-    description: Client ID of the Tailscale federated identity for tag:gauger-ci (infra output gauger_ci_client_id).
-    default: T4tv9NsNG611CNTRL-k23gE738kJ11CNTRL
-  tailscale-audience:
-    description: OIDC audience of that federated identity (infra output gauger_ci_audience).
-    default: api.tailscale.com/T4tv9NsNG611CNTRL-k23gE738kJ11CNTRL
   server:
-    description: Base URL of gauger-server on the tailnet.
-    default: http://gauger-server:4318
+    description: Base URL of gauger-server's runner listener.
+    default: https://gauger-server.taila8b8af.ts.net:10000
 runs:
   using: node24
   main: src/main.js

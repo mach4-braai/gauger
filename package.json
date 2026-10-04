@@ -1,7 +1,7 @@
 {
   "name": "gauger",
   "private": true,
-  "description": "GitHub Action that samples runner metrics and streams them to gauger-server over Tailscale.",
+  "description": "GitHub Action that samples runner metrics and streams them to gauger-server over HTTPS.",
   "license": "MIT",
   "type": "module",
   "engines": {

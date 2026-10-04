@@ -1,7 +1,7 @@
 //go:build e2e && linux
 
 // Package e2e runs the real gauger binary against a fake gauger-server and a
-// fake GitHub OIDC endpoint, dialing directly instead of through the tailnet.
+// fake GitHub OIDC endpoint.
 package e2e
 
 import (
@@ -112,7 +112,6 @@ func start(t *testing.T, server, stateDir string) *exec.Cmd {
 	cmd := exec.Command(binary,
 		"-state-dir", stateDir,
 		"-server", server,
-		"-no-tailnet",
 		"-check-run-id", "4242",
 		"-flush-every", "500ms",
 		"-final-budget", "5s",
@@ -167,7 +166,7 @@ func stop(t *testing.T, cmd *exec.Cmd, stateDir string) status {
 }
 
 type status struct {
-	Joined        bool     `json:"joined"`
+	Connected     bool     `json:"connected"`
 	DoneSent      bool     `json:"done_sent"`
 	SentBatches   int      `json:"sent_batches"`
 	UnsentBatches int      `json:"unsent_batches"`
@@ -208,7 +207,7 @@ func TestStreamsAndFlushesOnSIGTERM(t *testing.T) {
 	time.Sleep(1500 * time.Millisecond)
 	s := stop(t, cmd, dir)
 
-	if !s.Joined || !s.DoneSent || s.UnsentBatches != 0 || len(s.Warnings) != 0 {
+	if !s.Connected || !s.DoneSent || s.UnsentBatches != 0 || len(s.Warnings) != 0 {
 		t.Fatalf("status = %+v", s)
 	}
 	f.mu.Lock()

@@ -116,23 +116,20 @@ test("summaryTable renders the unsent count when the server was unreachable", ()
     version: "v1.2.3",
     sent_batches: 0,
     unsent_batches: 4,
-    join_ms: 0,
     peaks: { cpu_utilization: 0.42, memory_used_bytes: 1024 * 1024 },
   });
   assert.match(table, /\| Batches unsent \| 4 \|/);
   assert.match(table, /\| Batches sent \| 0 \|/);
-  assert.match(table, /\| Joined the tailnet \| no \|/);
   assert.match(table, /\| Peak CPU utilization \| 42\.0% \|/);
   assert.match(table, /\| Peak memory used \| 1\.0 MiB \|/);
   assert.match(table, /\| Disk read \| 0\.0 MiB \|/);
 });
 
-test("summaryTable shows the join time and totals for a healthy run", () => {
+test("summaryTable shows the totals for a healthy run", () => {
   const table = summaryTable({
     version: "v1.2.3",
     sent_batches: 7,
     unsent_batches: 0,
-    join_ms: 2500,
     peaks: {
       cpu_utilization: 0.8,
       memory_used_bytes: 2 * 1024 * 1024,
@@ -143,7 +140,6 @@ test("summaryTable shows the join time and totals for a healthy run", () => {
     },
   });
   assert.match(table, /\| Batches sent \| 7 \|/);
-  assert.match(table, /\| Joined the tailnet \| 2\.5 s \|/);
   assert.match(table, /\| Disk read \| 5\.0 MiB \|/);
   assert.match(table, /\| Network sent \| 0\.5 MiB \|/);
 });

@@ -26,8 +26,8 @@ type Uploader interface {
 	Metrics(ctx context.Context, batch []byte) error
 }
 
-// Connect blocks until gauger-server is reachable, which for tsnet means the
-// node has joined, and returns the uploader to use.
+// Connect returns the uploader to use, or an error when gauger cannot send at
+// all, such as when the job has no OIDC token.
 type Connect func(ctx context.Context) (Uploader, error)
 
 // FinalAttempts is how many drain attempts the post step gets before the
@@ -46,7 +46,7 @@ type Config struct {
 
 // Result is what happened, for the status file that post.js reads.
 type Result struct {
-	Joined          bool          `json:"joined"`
+	Connected       bool          `json:"connected"`
 	StartSent       bool          `json:"start_sent"`
 	DoneSent        bool          `json:"done_sent"`
 	SentBatches     int           `json:"sent_batches"`
@@ -73,9 +73,9 @@ type Agent struct {
 }
 
 type sendResult struct {
-	joined, startSent, doneSent bool
-	sent, rejected              int
-	joinErr, uploadErr, doneErr error
+	connected, startSent, doneSent bool
+	sent, rejected                 int
+	connectErr, uploadErr, doneErr error
 }
 
 // Run samples until ctx is cancelled, then flushes, drains and sends done
@@ -161,10 +161,10 @@ func (a *Agent) flush() {
 func (a *Agent) send(ctx, drainCtx context.Context, started time.Time, kick, final <-chan struct{}) (r sendResult) {
 	up, err := a.Connect(drainCtx)
 	if err != nil {
-		r.joinErr = err
+		r.connectErr = err
 		return r
 	}
-	r.joined = true
+	r.connected = true
 	a.Log.Printf("connected to gauger-server")
 
 	finalPhase, finalTries := false, 0
@@ -248,7 +248,7 @@ func (a *Agent) drain(ctx context.Context, up Uploader, r *sendResult) bool {
 
 func (a *Agent) result(r sendResult) Result {
 	res := Result{
-		Joined:          r.joined,
+		Connected:       r.connected,
 		StartSent:       r.startSent,
 		DoneSent:        r.doneSent,
 		SentBatches:     r.sent,
@@ -262,10 +262,10 @@ func (a *Agent) result(r sendResult) Result {
 	warn := func(format string, args ...any) {
 		res.Warnings = append(res.Warnings, fmt.Sprintf(format, args...))
 	}
-	if !r.joined {
-		cause := r.joinErr
+	if !r.connected {
+		cause := r.connectErr
 		if cause == nil || errors.Is(cause, context.Canceled) {
-			cause = errors.New("the job ended before the node joined")
+			cause = errors.New("the job ended before gauger connected")
 		}
 		warn("gauger could not reach gauger-server: %v", cause)
 	}
@@ -282,7 +282,7 @@ func (a *Agent) result(r sendResult) Result {
 	if res.RejectedBatches > 0 {
 		warn("gauger-server rejected %d batches (last error: %v)", res.RejectedBatches, r.uploadErr)
 	}
-	if r.joined && !r.doneSent && r.doneErr != nil {
+	if r.connected && !r.doneSent && r.doneErr != nil {
 		warn("gauger could not send the done event: %v", r.doneErr)
 	}
 	if a.sampleErrors > 0 {
