@@ -36,6 +36,9 @@ def load(root):
         for r in reqs:
             r["t"] = ts(r["start"])
             r["job"] = d.name
+            # gauger's 10 s http.Client timeout surfaces as "request canceled".
+            if not r["status"] and r.get("err_kind") == "other" and r["latency_ms"] >= 9990:
+                r["err_kind"] = "timeout"
         meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
         status = json.loads((d / "status.json").read_text()) if (d / "status.json").exists() else {}
         jobs.append({"name": d.name, "reqs": reqs, "meta": meta, "status": status})

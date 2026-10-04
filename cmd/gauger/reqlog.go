@@ -123,7 +123,7 @@ func (l *reqLog) RoundTrip(req *http.Request) (*http.Response, error) {
 			rec.ErrKind = "canceled"
 		case !rec.GotConn:
 			rec.ErrKind = "connect"
-		case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
+		case errors.Is(err, context.DeadlineExceeded) || errors.Is(req.Context().Err(), context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
 			rec.ErrKind = "timeout"
 		default:
 			rec.ErrKind = "other"
