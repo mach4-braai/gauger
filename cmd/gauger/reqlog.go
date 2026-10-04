@@ -37,6 +37,9 @@ type reqRecord struct {
 	ConnectMS   float64   `json:"connect_ms,omitempty"`
 	TLSMS       float64   `json:"tls_ms,omitempty"`
 	TTFBMS      float64   `json:"ttfb_ms,omitempty"`
+	WroteMS     float64   `json:"wrote_ms,omitempty"`
+	Remote      string    `json:"remote,omitempty"`
+	Local       string    `json:"local,omitempty"`
 	ErrKind     string    `json:"err_kind,omitempty"`
 	Err         string    `json:"err,omitempty"`
 }
@@ -96,8 +99,10 @@ func (l *reqLog) RoundTrip(req *http.Request) (*http.Response, error) {
 			mu.Lock()
 			rec.GotConn, rec.Reused, rec.WasIdle = true, i.Reused, i.WasIdle
 			rec.IdleMS = float64(i.IdleTime.Microseconds()) / 1000
+			rec.Remote, rec.Local = i.Conn.RemoteAddr().String(), i.Conn.LocalAddr().String()
 			mu.Unlock()
 		},
+		WroteRequest:         func(httptrace.WroteRequestInfo) { mu.Lock(); rec.WroteMS = since(start); mu.Unlock() },
 		GotFirstResponseByte: func() { mu.Lock(); rec.TTFBMS = since(start); mu.Unlock() },
 	}
 	resp, err := l.base.RoundTrip(req.WithContext(httptrace.WithClientTrace(req.Context(), trace)))

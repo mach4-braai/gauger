@@ -35,6 +35,7 @@ def load(root):
         reqs = [json.loads(l) for l in reqs_file.read_text().splitlines() if l.strip()] if reqs_file.exists() else []
         for r in reqs:
             r["t"] = ts(r["start"])
+            r["job"] = d.name
         meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
         status = json.loads((d / "status.json").read_text()) if (d / "status.json").exists() else {}
         jobs.append({"name": d.name, "reqs": reqs, "meta": meta, "status": status})
@@ -64,15 +65,6 @@ def summarize(jobs):
     new_conns = [r for r in reqs if r["got_conn"] and not r["reused"]]
     flush = meta.get("flush_every", "")
     sample = meta.get("sample_every", "")
-
-    def dur(s):
-        s = s.strip()
-        for unit, mul in (("ms", 0.001), ("s", 1), ("m", 60)):
-            if s.endswith(unit) and s[: -len(unit)].replace(".", "").isdigit():
-                return float(s[: -len(unit)]) * mul
-        return None
-
-    per_batch = (dur(flush) / dur(sample)) if dur(flush) and dur(sample) else None
     batch_bytes = [r["bytes"] for r in reqs if r["path"] == "/v1/metrics"]
     return {
         "label": meta.get("label", ""),
@@ -106,10 +98,28 @@ def summarize(jobs):
         "protos": sorted({r["proto"] for r in answered if r.get("proto")}),
         "batch_bytes_median": statistics.median(batch_bytes) if batch_bytes else None,
         "batch_bytes_max": max(batch_bytes, default=None),
-        "samples_per_batch": per_batch,
-        "bytes_per_sample": round(statistics.median(batch_bytes) / per_batch) if batch_bytes and per_batch else None,
+        "over_2s": sum(1 for r in answered if r["latency_ms"] > 2000),
+        "write_p50_p99_ms": [pct([r["wrote_ms"] for r in answered if r.get("wrote_ms")], p) for p in (50, 99)],
+        "wait_p50_p99_ms": [pct([r["ttfb_ms"] - r["wrote_ms"] for r in answered if r.get("wrote_ms") and r.get("ttfb_ms")], p) for p in (50, 99)],
+        "by_remote": by_remote(answered),
         "unsent_batches": sum(j["status"].get("unsent_batches", 0) for j in jobs),
         "error_samples": [r["err"] for r in errors][:5],
+    }
+
+
+def by_remote(reqs):
+    groups = {}
+    for r in reqs:
+        groups.setdefault(r.get("remote", "").rsplit(":", 1)[0] or "?", []).append(r)
+    return {
+        ip: {
+            "jobs": len({r["job"] for r in rs}),
+            "requests": len(rs),
+            "p50_ms": pct([r["latency_ms"] for r in rs], 50),
+            "p99_ms": pct([r["latency_ms"] for r in rs], 99),
+            "over_2s": sum(1 for r in rs if r["latency_ms"] > 2000),
+        }
+        for ip, rs in sorted(groups.items())
     }
 
 
@@ -131,11 +141,15 @@ def markdown(s):
         ("TLS handshake p50 ms", s["tls_handshake_p50_ms"]),
         ("Protocol", ", ".join(s["protos"])),
         ("Batch bytes median / max", f'{s["batch_bytes_median"]} / {s["batch_bytes_max"]}'),
-        ("Bytes per sample (median batch / samples per batch)", f'{s["bytes_per_sample"]} ({s["samples_per_batch"]} per batch)'),
+        ("Requests over 2 s", s["over_2s"]),
+        ("Upload (request written) p50 / p99 ms", " / ".join(map(str, s["write_p50_p99_ms"]))),
+        ("Wait (written to first byte) p50 / p99 ms", " / ".join(map(str, s["wait_p50_p99_ms"]))),
         ("Unsent batches", s["unsent_batches"]),
     ]
     out = [f'### {s["label"]}', "", "| | |", "|---|---|"]
     out += [f"| {k} | {v} |" for k, v in rows]
+    out += ["", "| Funnel ingress | jobs | requests | p50 ms | p99 ms | over 2 s |", "|---|---|---|---|---|---|"]
+    out += [f'| {ip} | {g["jobs"]} | {g["requests"]} | {g["p50_ms"]} | {g["p99_ms"]} | {g["over_2s"]} |' for ip, g in s["by_remote"].items()]
     if s["error_samples"]:
         out += ["", "First errors:", ""] + [f"- `{e}`" for e in s["error_samples"]]
     return "\n".join(out) + "\n"
