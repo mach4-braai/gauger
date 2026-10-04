@@ -39,6 +39,10 @@ def load(root):
             # gauger's 10 s http.Client timeout surfaces as "request canceled".
             if not r["status"] and r.get("err_kind") == "other" and r["latency_ms"] >= 9990:
                 r["err_kind"] = "timeout"
+            # TCP connected but the request never got a connection: the TLS
+            # handshake did not finish.
+            if r.get("err_kind") == "connect" and r.get("connect_ms") and not r.get("tls_ms"):
+                r["err_kind"] = "tls_timeout"
         meta = json.loads((d / "meta.json").read_text()) if (d / "meta.json").exists() else {}
         status = json.loads((d / "status.json").read_text()) if (d / "status.json").exists() else {}
         jobs.append({"name": d.name, "reqs": reqs, "meta": meta, "status": status})
