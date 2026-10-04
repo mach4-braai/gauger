@@ -107,6 +107,39 @@ func TestReadKeepsVirtualInterfacesWhenNoneHasADevice(t *testing.T) {
 	}
 }
 
+func TestReadSkipsEnslavedInterfaces(t *testing.T) {
+	root := t.TempDir()
+	const netdevVF = `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    5000      50    0    0    0     0          0         0     5000      50    0    0    0     0       0          0
+  eth0: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+enP1s1: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+`
+	if err := os.MkdirAll(filepath.Join(root, "proc", "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "net", "dev"), []byte(netdevVF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"sys/class/net/lo", "sys/class/net/eth0/device", "sys/class/net/enP1s1/device"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../eth0", filepath.Join(root, "sys/class/net/enP1s1/master")); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reader{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys")}
+	got, err := r.netdev()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Interface{{Name: "eth0", RxBytes: 1000000, TxBytes: 200000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("netdev = %+v, want %+v", got, want)
+	}
+}
+
 func TestReadFailsOnMalformedStat(t *testing.T) {
 	r := fixture(t, true)
 	if err := os.WriteFile(filepath.Join(r.Proc, "stat"), []byte("cpu 1 2 x\n"), 0o644); err != nil {
