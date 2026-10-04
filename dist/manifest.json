@@ -1,0 +1,13 @@
+{
+  "version": "v0.2.0",
+  "assets": {
+    "linux-x64": {
+      "url": "https://github.com/mach4-braai/gauger/releases/download/v0.2.0/gauger-linux-amd64.gz",
+      "sha256": "4a0edfc098adfc27a661e2d87cb6e95240decbafa6bc0633493f9a37fc3d77cc"
+    },
+    "linux-arm64": {
+      "url": "https://github.com/mach4-braai/gauger/releases/download/v0.2.0/gauger-linux-arm64.gz",
+      "sha256": "4b1755f43787f4f59380cb23873f79b0df328cf2b5e024f04d3f249277bc5255"
+    }
+  }
+}
