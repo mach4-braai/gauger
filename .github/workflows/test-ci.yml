@@ -90,6 +90,12 @@ jobs:
         with:
           server: http://gauger-server-absent:4318
 
+      - name: Check that gauger's process env has no runtime token
+        run: |
+          set -eu
+          pid=$(pgrep -x gauger)
+          ! grep -qz '^ACTIONS_RUNTIME_TOKEN=' "/proc/$pid/environ"
+
       - name: Stand in for the job's own steps
         run: sleep 20
 

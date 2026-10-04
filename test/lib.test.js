@@ -26,13 +26,15 @@ test("download keeps a binary whose sha256 matches and makes it executable", asy
   const file = path.join(tmp(), "gauger");
   await download("https://example.test/gauger", createHash("sha256").update(body).digest("hex"), file, serve(body));
   assert.deepEqual(readFileSync(file), body);
-  assert.equal(statSync(file).mode & 0o777, 0o755);
+  assert.equal(statSync(file).mode & 0o777, 0o700);
+  assert.equal(existsSync(`${file}.tmp`), false);
 });
 
-test("download does not keep a binary whose sha256 does not match", async () => {
+test("download does not keep a binary, or its temp file, whose sha256 does not match", async () => {
   const file = path.join(tmp(), "gauger");
   await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(Buffer.from("tampered"))), /sha256/);
   assert.equal(existsSync(file), false);
+  assert.equal(existsSync(`${file}.tmp`), false);
 });
 
 test("download fails on an HTTP error", async () => {
