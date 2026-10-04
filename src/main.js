@@ -3,7 +3,7 @@ import { once } from "node:events";
 import { mkdirSync, openSync } from "node:fs";
 import path from "node:path";
 
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
 import { assetKey, defaultManifestPath, download, readManifest } from "./lib.js";
 
