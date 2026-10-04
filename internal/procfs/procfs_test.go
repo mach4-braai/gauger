@@ -1,9 +1,11 @@
 package procfs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -172,6 +174,158 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func addProcess(t *testing.T, r *Reader, pid int, comm string, utime, stime, rssKiB uint64) {
+	t.Helper()
+	dir := filepath.Join(r.Proc, strconv.Itoa(pid))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stat := fmt.Sprintf("%d (%s) R 1 1 1 0 -1 0 0 0 0 0 %d %d 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n", pid, comm, utime, stime)
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status := fmt.Sprintf("Name:\t%s\nVmRSS:\t %d kB\n", comm, rssKiB)
+	if err := os.WriteFile(filepath.Join(dir, "status"), []byte(status), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProcessesRanksByCPUDeltaAndByMemory(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "compile", 500, 100, 4000)
+	addProcess(t, r, 200, "bash", 50, 10, 1000)
+	addProcess(t, r, 300, "go", 10, 5, 9000)
+
+	topCPU, topMemory := r.processes()
+	if len(topCPU) != 0 {
+		t.Fatalf("first walk topCPU = %+v, want none: there's no previous walk to diff against", topCPU)
+	}
+	wantMemory := []Process{
+		{Executable: "go", CPUSeconds: 0.15, RSSBytes: 9000 * 1024},
+		{Executable: "compile", CPUSeconds: 6, RSSBytes: 4000 * 1024},
+		{Executable: "bash", CPUSeconds: 0.6, RSSBytes: 1000 * 1024},
+	}
+	if !reflect.DeepEqual(topMemory, wantMemory) {
+		t.Fatalf("topMemory = %+v, want %+v", topMemory, wantMemory)
+	}
+
+	addProcess(t, r, 100, "compile", 510, 100, 4000)
+	addProcess(t, r, 200, "bash", 550, 200, 1000)
+	addProcess(t, r, 300, "go", 10, 5, 9000)
+
+	topCPU, _ = r.processes()
+	if len(topCPU) == 0 || topCPU[0].Executable != "bash" {
+		t.Fatalf("second walk topCPU = %+v, want bash ranked first by its CPU delta", topCPU)
+	}
+}
+
+func TestProcessesSendsNoCPUPointsOnTheFirstWalk(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 1, "runner", 1000000, 500000, 50000)
+
+	topCPU, topMemory := r.processes()
+	if len(topCPU) != 0 {
+		t.Fatalf("topCPU = %+v, want none on the first walk, even for a process with a big lifetime total", topCPU)
+	}
+	if len(topMemory) != 1 {
+		t.Fatalf("topMemory = %+v, want one entry: RSS is current, not diffed against a previous walk", topMemory)
+	}
+}
+
+func TestProcessesNewPIDOnALaterWalkSendsItsLifetimeTotal(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "compile", 500, 100, 4000)
+	r.processes()
+
+	addProcess(t, r, 100, "compile", 510, 100, 4000)
+	addProcess(t, r, 200, "go", 300, 20, 2000)
+
+	topCPU, _ := r.processes()
+	var got *Process
+	for i := range topCPU {
+		if topCPU[i].Executable == "go" {
+			got = &topCPU[i]
+		}
+	}
+	if got == nil || got.CPUSeconds != 3.2 {
+		t.Fatalf("topCPU = %+v, want go at 3.2s: its lifetime total, since it started after the previous walk", topCPU)
+	}
+}
+
+func TestProcessesCPUPointIsTheDeltaNotTheLifetimeTotal(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "idle", 100000, 50000, 2000)
+	addProcess(t, r, 200, "busy", 10, 5, 1000)
+	r.processes()
+
+	addProcess(t, r, 100, "idle", 100001, 50000, 2000)
+	addProcess(t, r, 200, "busy", 510, 205, 1000)
+
+	topCPU, _ := r.processes()
+	if len(topCPU) == 0 || topCPU[0].Executable != "busy" {
+		t.Fatalf("topCPU = %+v, want busy ranked first", topCPU)
+	}
+	if topCPU[0].CPUSeconds != 7 {
+		t.Errorf("busy CPUSeconds = %v, want 7", topCPU[0].CPUSeconds)
+	}
+	for _, p := range topCPU {
+		if p.Executable == "idle" && p.CPUSeconds > 0.1 {
+			t.Errorf("idle CPUSeconds = %v, want near 0, not its lifetime total of 1500", p.CPUSeconds)
+		}
+	}
+}
+
+func TestProcessesSkipsAProcessMissingStatus(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "compile", 500, 100, 4000)
+	r.processes()
+
+	addProcess(t, r, 100, "compile", 510, 100, 4000)
+	dir := filepath.Join(r.Proc, "200")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stat := "200 (bash) R 1 1 1 0 -1 0 0 0 0 0 50 10 0 0 20 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 17 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n"
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	topCPU, topMemory := r.processes()
+	if len(topCPU) != 1 || topCPU[0].Executable != "compile" {
+		t.Fatalf("topCPU = %+v, want only compile: a vanished PID must not appear or fail the walk", topCPU)
+	}
+	if len(topMemory) != 1 || topMemory[0].Executable != "compile" {
+		t.Fatalf("topMemory = %+v, want only compile", topMemory)
+	}
+}
+
+func TestProcessesSkipsAPIDWithNoStatFile(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.MkdirAll(filepath.Join(r.Proc, "999"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	topCPU, topMemory := r.processes()
+	if len(topCPU) != 0 || len(topMemory) != 0 {
+		t.Fatalf("topCPU = %v, topMemory = %v, want neither: a PID with no stat file must not fail the walk", topCPU, topMemory)
+	}
+}
+
+func TestReadWalksProcessesEveryProcessWalkEvery(t *testing.T) {
+	r := fixture(t, true)
+	addProcess(t, r, 100, "compile", 500, 100, 4000)
+
+	for i := range processWalkEvery * 2 {
+		got, err := r.Read(time.Unix(int64(i), 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantWalk := i%processWalkEvery == 0
+		if gotWalk := len(got.TopMemory) > 0; gotWalk != wantWalk {
+			t.Errorf("Read #%d: walked = %v, want %v", i, gotWalk, wantWalk)
+		}
 	}
 }
 

@@ -159,6 +159,8 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 		fsUsage      []*metricspb.NumberDataPoint
 		containerCPU []*metricspb.NumberDataPoint
 		containerMem []*metricspb.NumberDataPoint
+		procCPU      []*metricspb.NumberDataPoint
+		procMem      []*metricspb.NumberDataPoint
 		lastTime     uint64
 		lastLimit    int64
 	)
@@ -227,6 +229,20 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 				b.intPoint(t, int64(fs.UsedBytes), mount, stringKV("system.filesystem.state", "used")),
 				b.intPoint(t, int64(fs.FreeBytes), mount, stringKV("system.filesystem.state", "free")))
 		}
+		for _, p := range s.TopCPU {
+			procCPU = append(procCPU, &metricspb.NumberDataPoint{
+				TimeUnixNano: t,
+				Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: p.CPUSeconds},
+				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+			})
+		}
+		for _, p := range s.TopMemory {
+			procMem = append(procMem, &metricspb.NumberDataPoint{
+				TimeUnixNano: t,
+				Value:        &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.RSSBytes)},
+				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+			})
+		}
 		for _, cnt := range s.Containers {
 			base := b.baseContainerCPU(cnt)
 			attrs := []*commonpb.KeyValue{stringKV("container.id", cnt.ID)}
@@ -278,6 +294,20 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 	}
 	if len(containerCPU) > 0 {
 		ms = append(ms, counter("container.cpu.time", "s", containerCPU), upDown("container.memory.usage", "By", containerMem...))
+	}
+	if len(procCPU) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "process.cpu.time",
+			Unit: "s",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: procCPU}},
+		})
+	}
+	if len(procMem) > 0 {
+		ms = append(ms, &metricspb.Metric{
+			Name: "process.memory.usage",
+			Unit: "By",
+			Data: &metricspb.Metric_Gauge{Gauge: &metricspb.Gauge{DataPoints: procMem}},
+		})
 	}
 
 	return &metricspb.ResourceMetrics{
