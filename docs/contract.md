@@ -88,6 +88,7 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 | `system.disk.io` | monotonic sum | `By` | `system.device`, `disk.io.direction`: `read`, `write` |
 | `system.disk.operations` | monotonic sum | `{operation}` | `system.device`, `disk.io.direction` |
 | `system.network.io` | monotonic sum | `By` | `network.interface.name`, `network.io.direction`: `receive`, `transmit` |
+| `system.linux.pressure.stall.time` | monotonic sum | `us` | `system.pressure.resource`: `cpu`, `memory`, `io`; `system.pressure.type`: `some`, `full` |
 | `system.filesystem.usage` | non-monotonic sum | `By` | `system.filesystem.mountpoint`, `system.filesystem.state`: `used`, `free` |
 | `container.cpu.time` | monotonic sum, cumulative since the container's first sample (cgroup v2 `cpu.stat` `usage_usec`) | `s` | `container.id`, `container.image.name` (when known) |
 | `container.memory.usage` | non-monotonic sum (cgroup v2 `memory.current`) | `By` | `container.id`, `container.image.name` (when known) |
@@ -97,6 +98,7 @@ Sampled once a second. Sums are cumulative from the first sample of the job, so 
 - Disks are whole disks from `/sys/block`, leaving out loop and RAM devices. Interfaces are the ones backed by a device, which leaves out `lo`, `docker0` and veth pairs, and leaves out any interface with a `/sys/class/net/<name>/master` link, such as a virtual function enslaved to a netvsc interface on Azure.
 - Container metrics come from cgroup v2 cgroups at `/sys/fs/cgroup/system.slice/docker-<id>.scope`, one series per container running directly on the runner (service containers, `docker run`, `container:` jobs). A runner without Docker, or without the cgroup v2 unified hierarchy, sends none. `container.image.name` is present only when gauger can reach the Docker Engine API's Unix socket without root; otherwise a container still reports with `container.id` alone.
 - Filesystem usage covers the filesystem holding `/` and `$GITHUB_WORKSPACE`, once each when they're the same filesystem. A failing `statfs` leaves the metric out of that sample rather than failing it.
+- Pressure stall time comes from `/proc/pressure/{cpu,memory,io}`: the kernel's own cumulative microsecond counters since boot, but gauger counts from the job's first sample like every other sum here, not from boot. A resource is left out of the batch entirely when its file is missing, which happens on kernels built without `CONFIG_PSI`. Current kernels write a `full` line for `cpu` that always reads zero, since a stall of every runnable task also stalls the thing that would resume them; older kernels omit that line instead. Either way, gauger only sends `system.pressure.type=full` for `cpu` when the kernel's file has the line.
 
 ## Fallback artifact
 

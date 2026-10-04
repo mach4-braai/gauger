@@ -25,6 +25,7 @@ type Batcher struct {
 	prevCPU          *procfs.CPU
 	diskBase         map[string]procfs.Disk
 	ifaceBase        map[string]procfs.Interface
+	pressureBase     map[string]uint64
 	containerCPUBase map[string]uint64
 	pending          []procfs.Sample
 
@@ -64,6 +65,7 @@ func NewBatcher(attrs []Attribute, nproc int, version string) *Batcher {
 		nproc:            int64(nproc),
 		diskBase:         map[string]procfs.Disk{},
 		ifaceBase:        map[string]procfs.Interface{},
+		pressureBase:     map[string]uint64{},
 		containerCPUBase: map[string]uint64{},
 		lastDisks:        map[string]procfs.Disk{},
 		lastIfaces:       map[string]procfs.Interface{},
@@ -151,6 +153,7 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 		diskIO       []*metricspb.NumberDataPoint
 		diskOps      []*metricspb.NumberDataPoint
 		netIO        []*metricspb.NumberDataPoint
+		pressure     []*metricspb.NumberDataPoint
 		fsUsage      []*metricspb.NumberDataPoint
 		containerCPU []*metricspb.NumberDataPoint
 		containerMem []*metricspb.NumberDataPoint
@@ -205,6 +208,15 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 				b.intPoint(t, int64(n.RxBytes-base.RxBytes), name, stringKV("network.io.direction", "receive")),
 				b.intPoint(t, int64(n.TxBytes-base.TxBytes), name, stringKV("network.io.direction", "transmit")))
 		}
+		for _, p := range s.Pressure {
+			resource := stringKV("system.pressure.resource", p.Resource)
+			someBase := b.basePressure(p.Resource+":some", p.Some)
+			pressure = append(pressure, b.intPoint(t, int64(p.Some-someBase), resource, stringKV("system.pressure.type", "some")))
+			if p.Full != nil {
+				fullBase := b.basePressure(p.Resource+":full", *p.Full)
+				pressure = append(pressure, b.intPoint(t, int64(*p.Full-fullBase), resource, stringKV("system.pressure.type", "full")))
+			}
+		}
 		for _, fs := range s.Filesystems {
 			mount := stringKV("system.filesystem.mountpoint", fs.Mountpoint)
 			fsUsage = append(fsUsage,
@@ -247,6 +259,9 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(pressure) > 0 {
+		ms = append(ms, counter("system.linux.pressure.stall.time", "us", pressure))
 	}
 	if len(fsUsage) > 0 {
 		ms = append(ms, upDown("system.filesystem.usage", "By", fsUsage...))
@@ -302,6 +317,15 @@ func (b *Batcher) baseIface(n procfs.Interface) procfs.Interface {
 	if !ok || n.RxBytes < base.RxBytes || n.TxBytes < base.TxBytes {
 		base = n
 		b.ifaceBase[n.Name] = n
+	}
+	return base
+}
+
+func (b *Batcher) basePressure(key string, v uint64) uint64 {
+	base, ok := b.pressureBase[key]
+	if !ok || v < base {
+		base = v
+		b.pressureBase[key] = v
 	}
 	return base
 }
