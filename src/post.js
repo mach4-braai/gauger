@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-import { DefaultArtifactClient } from "@actions/artifact";
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
-import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches } from "./lib.js";
+import { STOP_TIMEOUT_MS, alive, artifactName, sleep, spooledBatches, uploadArtifact } from "./lib.js";
 
 async function stop(pid, statusFile) {
   try {
@@ -42,8 +41,9 @@ async function uploadUnsent(spoolDir, checkRunId) {
   const files = await spooledBatches(spoolDir);
   if (files.length === 0) return;
   const name = artifactName(checkRunId, process.env.RUNNER_NAME);
-  await new DefaultArtifactClient().uploadArtifact(name, files, spoolDir, { retentionDays: 7 });
-  core.info(`gauger uploaded ${files.length} unsent batches as artifact ${name}.`);
+  if (await uploadArtifact(name, files, 7)) {
+    core.info(`gauger uploaded ${files.length} unsent batches as artifact ${name}.`);
+  }
 }
 
 async function post() {
