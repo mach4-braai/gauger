@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,6 +271,58 @@ func TestFlushSendsTopProcessesFromWalkedSamplesOnly(t *testing.T) {
 	}
 	if got := point(t, mem, "process.executable.name", "go", 101).GetAsInt(); got != 9000*1024 {
 		t.Errorf("go RSS = %d, want %d", got, 9000*1024)
+	}
+}
+
+func TestTopProcessesWithTheSameExecutableKeepDistinctSeries(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		Memory: procfs.Memory{Total: 1000},
+		TopCPU: []procfs.Process{
+			{Executable: "node", CPUSeconds: 3},
+			{Executable: "node", CPUSeconds: 2},
+			{Executable: "go", CPUSeconds: 1},
+		},
+		TopMemory: []procfs.Process{
+			{Executable: "node", RSSBytes: 300},
+			{Executable: "node", RSSBytes: 200},
+		},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+
+	for _, tc := range []struct {
+		metric string
+		want   []string
+	}{
+		{"process.cpu.time", []string{"node#1=3", "node#2=2", "go#3=1"}},
+		{"process.memory.usage", []string{"node#1=300", "node#2=200"}},
+	} {
+		var got []string
+		for _, dp := range ms[tc.metric].GetGauge().GetDataPoints() {
+			var name string
+			var rank int64
+			for _, kv := range dp.Attributes {
+				switch kv.Key {
+				case "process.executable.name":
+					name = kv.Value.GetStringValue()
+				case "gauger.process.rank":
+					rank = kv.Value.GetIntValue()
+				}
+			}
+			v := dp.GetAsDouble()
+			if iv, ok := dp.Value.(*metricspb.NumberDataPoint_AsInt); ok {
+				v = float64(iv.AsInt)
+			}
+			got = append(got, fmt.Sprintf("%s#%d=%g", name, rank, v))
+		}
+		if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+			t.Errorf("%s points = %v, want %v", tc.metric, got, tc.want)
+		}
 	}
 }
 

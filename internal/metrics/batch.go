@@ -229,18 +229,18 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 				b.intPoint(t, int64(fs.UsedBytes), mount, stringKV("system.filesystem.state", "used")),
 				b.intPoint(t, int64(fs.FreeBytes), mount, stringKV("system.filesystem.state", "free")))
 		}
-		for _, p := range s.TopCPU {
+		for i, p := range s.TopCPU {
 			procCPU = append(procCPU, &metricspb.NumberDataPoint{
 				TimeUnixNano: t,
 				Value:        &metricspb.NumberDataPoint_AsDouble{AsDouble: p.CPUSeconds},
-				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+				Attributes:   processAttrs(p, i),
 			})
 		}
-		for _, p := range s.TopMemory {
+		for i, p := range s.TopMemory {
 			procMem = append(procMem, &metricspb.NumberDataPoint{
 				TimeUnixNano: t,
 				Value:        &metricspb.NumberDataPoint_AsInt{AsInt: int64(p.RSSBytes)},
-				Attributes:   []*commonpb.KeyValue{stringKV("process.executable.name", p.Executable)},
+				Attributes:   processAttrs(p, i),
 			})
 		}
 		for _, cnt := range s.Containers {
@@ -444,6 +444,13 @@ func counter(name, unit string, points []*metricspb.NumberDataPoint) *metricspb.
 
 func stringKV(k, v string) *commonpb.KeyValue {
 	return &commonpb.KeyValue{Key: k, Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: v}}}
+}
+
+func processAttrs(p procfs.Process, i int) []*commonpb.KeyValue {
+	return []*commonpb.KeyValue{
+		stringKV("process.executable.name", p.Executable),
+		{Key: "gauger.process.rank", Value: &commonpb.AnyValue{Value: &commonpb.AnyValue_IntValue{IntValue: int64(i + 1)}}},
+	}
 }
 
 func nanos(t time.Time) uint64 { return uint64(t.UnixNano()) }
