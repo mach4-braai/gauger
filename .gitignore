@@ -4,4 +4,4 @@ Thumbs.db
 __pycache__/
 /bin/
 /node_modules/
-/dist/manifest.json
+/dist/
