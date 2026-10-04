@@ -3,9 +3,22 @@ import { once } from "node:events";
 import { mkdirSync, openSync } from "node:fs";
 import path from "node:path";
 
-import * as core from "@actions/core";
+import * as core from "./actions.js";
 
 import { assetKey, defaultManifestPath, download, readManifest } from "./lib.js";
+
+const ENV_ALLOWLIST_NAMES = new Set(["PATH", "HOME", "ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN"]);
+const ENV_ALLOWLIST_PREFIXES = ["GITHUB_", "RUNNER_"];
+
+function launchEnv() {
+  const env = {};
+  for (const [name, value] of Object.entries(process.env)) {
+    if (ENV_ALLOWLIST_NAMES.has(name) || ENV_ALLOWLIST_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+      env[name] = value;
+    }
+  }
+  return env;
+}
 
 async function main() {
   const key = assetKey(process.platform, process.arch);
@@ -27,7 +40,8 @@ async function main() {
   const stateDir = path.join(dir, "state");
   mkdirSync(stateDir, { recursive: true });
   const binary = path.join(dir, "gauger");
-  await download(asset.url, asset.sha256, binary);
+  const bytes = await download(asset.url, asset.sha256, binary);
+  core.info(`downloaded ${bytes} bytes for ${key}`);
 
   const checkRunId = core.getInput("check-run-id");
   const args = [
@@ -38,7 +52,7 @@ async function main() {
     "-ts-audience", core.getInput("tailscale-audience"),
   ];
   const log = openSync(path.join(dir, "gauger.log"), "a");
-  const child = spawn(binary, args, { detached: true, stdio: ["ignore", log, log] });
+  const child = spawn(binary, args, { detached: true, stdio: ["ignore", log, log], env: launchEnv() });
   await Promise.race([
     once(child, "spawn"),
     once(child, "error").then(([error]) => Promise.reject(error)),

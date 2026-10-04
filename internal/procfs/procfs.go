@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -25,9 +26,14 @@ func (c CPU) Total() uint64 {
 	return c.User + c.Nice + c.System + c.Idle + c.IOWait + c.IRQ + c.SoftIRQ + c.Steal
 }
 
+type Processes struct {
+	Running, Blocked uint64
+}
+
 // Memory holds /proc/meminfo values in bytes.
 type Memory struct {
 	Total, Free, Available, Buffers, Cached, SReclaimable uint64
+	SwapTotal, SwapFree                                   uint64
 }
 
 // Disk holds the cumulative counters of one whole disk from /proc/diskstats.
@@ -43,6 +49,11 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
+type Filesystem struct {
+	Mountpoint           string
+	UsedBytes, FreeBytes uint64
+}
+
 type Pressure struct {
 	Resource string
 	Some     uint64
@@ -51,34 +62,42 @@ type Pressure struct {
 
 // Sample is one reading of every source.
 type Sample struct {
-	Time       time.Time
-	CPU        CPU
-	Memory     Memory
-	Disks      []Disk
-	Interfaces []Interface
-	Pressure   []Pressure
+	Time        time.Time
+	CPU         CPU
+	Processes   Processes
+	Memory      Memory
+	Disks       []Disk
+	Interfaces  []Interface
+	Pressure    []Pressure
+	Filesystems []Filesystem
+	Containers  []Container
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
 type Reader struct {
-	Proc string
-	Sys  string
+	Proc      string
+	Sys       string
+	Root      string
+	Workspace string
+
+	DockerSocket string
 
 	disks      map[string]bool
 	interfaces map[string]bool
 }
 
 // NewReader returns a Reader for the live /proc and /sys.
-func NewReader() *Reader {
-	return &Reader{Proc: "/proc", Sys: "/sys"}
+func NewReader(workspace string) *Reader {
+	return &Reader{Proc: "/proc", Sys: "/sys", Root: "/", Workspace: workspace}
 }
 
-// Read takes one sample. A failure in one source fails the whole sample, so a
-// batch never mixes complete and partial readings.
+// Read takes one sample. A failure in cpu, memory, disk or network fails the
+// whole sample, so a batch never mixes complete and partial readings. A
+// failing statfs only skips filesystem usage.
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error
-	if s.CPU, err = r.cpu(); err != nil {
+	if s.CPU, s.Processes, err = r.stat(); err != nil {
 		return Sample{}, err
 	}
 	if s.Memory, err = r.memory(); err != nil {
@@ -93,26 +112,52 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	if s.Pressure, err = r.pressure(); err != nil {
 		return Sample{}, err
 	}
+	s.Filesystems = r.filesystems()
+	s.Containers = r.containers()
 	return s, nil
 }
 
-func (r *Reader) cpu() (CPU, error) {
+func (r *Reader) stat() (CPU, Processes, error) {
 	data, err := os.ReadFile(filepath.Join(r.Proc, "stat"))
 	if err != nil {
-		return CPU{}, err
+		return CPU{}, Processes{}, err
 	}
-	line, _, _ := bytes.Cut(data, []byte("\n"))
+	line, rest, _ := bytes.Cut(data, []byte("\n"))
 	fields := strings.Fields(string(line))
 	if len(fields) < 9 || fields[0] != "cpu" {
-		return CPU{}, fmt.Errorf("unexpected first line in /proc/stat: %q", line)
+		return CPU{}, Processes{}, fmt.Errorf("unexpected first line in /proc/stat: %q", line)
 	}
 	var v [8]uint64
 	for i := range v {
 		if v[i], err = strconv.ParseUint(fields[i+1], 10, 64); err != nil {
-			return CPU{}, fmt.Errorf("parse /proc/stat: %w", err)
+			return CPU{}, Processes{}, fmt.Errorf("parse /proc/stat: %w", err)
 		}
 	}
-	return CPU{User: v[0], Nice: v[1], System: v[2], Idle: v[3], IOWait: v[4], IRQ: v[5], SoftIRQ: v[6], Steal: v[7]}, nil
+	cpu := CPU{User: v[0], Nice: v[1], System: v[2], Idle: v[3], IOWait: v[4], IRQ: v[5], SoftIRQ: v[6], Steal: v[7]}
+
+	var procs Processes
+	dst := map[string]*uint64{
+		"procs_running": &procs.Running,
+		"procs_blocked": &procs.Blocked,
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(rest))
+	for scanner.Scan() {
+		parts := strings.Fields(scanner.Text())
+		if len(parts) < 2 {
+			continue
+		}
+		p, ok := dst[parts[0]]
+		if !ok {
+			continue
+		}
+		if *p, err = strconv.ParseUint(parts[1], 10, 64); err != nil {
+			return CPU{}, Processes{}, fmt.Errorf("parse /proc/stat %s: %w", parts[0], err)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return CPU{}, Processes{}, err
+	}
+	return cpu, procs, nil
 }
 
 func (r *Reader) memory() (Memory, error) {
@@ -129,6 +174,8 @@ func (r *Reader) memory() (Memory, error) {
 		"Buffers:":      &m.Buffers,
 		"Cached:":       &m.Cached,
 		"SReclaimable:": &m.SReclaimable,
+		"SwapTotal:":    &m.SwapTotal,
+		"SwapFree:":     &m.SwapFree,
 	}
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -153,6 +200,47 @@ func (r *Reader) memory() (Memory, error) {
 		return Memory{}, errors.New("no MemTotal in /proc/meminfo")
 	}
 	return m, nil
+}
+
+func (r *Reader) CPUModel() (string, error) {
+	f, err := os.Open(filepath.Join(r.Proc, "cpuinfo"))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	var modelName, implementer, part string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(scanner.Text(), ":")
+		if !ok {
+			continue
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		switch key {
+		case "model name":
+			if modelName == "" {
+				modelName = value
+			}
+		case "CPU implementer":
+			if implementer == "" {
+				implementer = value
+			}
+		case "CPU part":
+			if part == "" {
+				part = value
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if modelName != "" {
+		return modelName, nil
+	}
+	if implementer != "" && part != "" {
+		return implementer + " " + part, nil
+	}
+	return "", nil
 }
 
 // wholeDisk reports whether name is a disk rather than a partition or a
@@ -202,7 +290,8 @@ func (r *Reader) diskstats() ([]Disk, error) {
 }
 
 // hardware reports whether an interface is backed by a device, which leaves
-// out lo, docker0, veth pairs and other bridges that would count traffic twice.
+// out lo, docker0, veth pairs and other bridges that would count traffic
+// twice. It also leaves out interfaces enslaved to another interface.
 func (r *Reader) hardware(name string) bool {
 	if known, ok := r.interfaces[name]; ok {
 		return known
@@ -211,8 +300,12 @@ func (r *Reader) hardware(name string) bool {
 		r.interfaces = map[string]bool{}
 	}
 	_, err := os.Stat(filepath.Join(r.Sys, "class", "net", name, "device"))
-	r.interfaces[name] = err == nil
-	return err == nil
+	hasDevice := err == nil
+	_, err = os.Lstat(filepath.Join(r.Sys, "class", "net", name, "master"))
+	enslaved := err == nil
+	known := hasDevice && !enslaved
+	r.interfaces[name] = known
+	return known
 }
 
 func (r *Reader) netdev() ([]Interface, error) {
@@ -249,6 +342,38 @@ func (r *Reader) netdev() ([]Interface, error) {
 		return all, nil
 	}
 	return hardware, nil
+}
+
+func (r *Reader) filesystems() []Filesystem {
+	paths := []string{r.Root}
+	if r.Workspace != "" && r.Workspace != r.Root {
+		paths = append(paths, r.Workspace)
+	}
+	var out []Filesystem
+	seen := map[uint64]bool{}
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+				dev := uint64(sys.Dev)
+				if seen[dev] {
+					continue
+				}
+				seen[dev] = true
+			}
+		}
+		var sfs syscall.Statfs_t
+		if err := syscall.Statfs(p, &sfs); err != nil {
+			continue
+		}
+		total := uint64(sfs.Bsize) * sfs.Blocks
+		free := uint64(sfs.Bsize) * sfs.Bavail
+		used := uint64(0)
+		if total > free {
+			used = total - free
+		}
+		out = append(out, Filesystem{Mountpoint: p, UsedBytes: used, FreeBytes: free})
+	}
+	return out
 }
 
 func (r *Reader) pressure() ([]Pressure, error) {
