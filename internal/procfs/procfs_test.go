@@ -11,6 +11,8 @@ import (
 const stat = `cpu  100 5 50 1000 20 3 2 1 0 0
 cpu0 50 2 25 500 10 1 1 0 0 0
 intr 12345
+procs_running 4
+procs_blocked 1
 `
 
 const meminfo = `MemTotal:       16384000 kB
@@ -20,6 +22,22 @@ Buffers:          100000 kB
 Cached:          3000000 kB
 SwapCached:            0 kB
 SReclaimable:     200000 kB
+SwapTotal:       2000000 kB
+SwapFree:         500000 kB
+`
+
+const cpuinfoX86 = `processor	: 0
+vendor_id	: GenuineIntel
+model name	: Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+`
+
+const cpuinfoArm64 = `processor	: 0
+BogoMIPS	: 50.00
+CPU implementer	: 0x41
+CPU architecture: 8
+CPU variant	: 0x3
+CPU part	: 0xd0c
+CPU revision	: 1
 `
 
 const diskstats = `   7       0 loop0 90 0 1800 10 0 0 0 0 0 20 10 0 0 0 0 0 0
@@ -35,6 +53,16 @@ const netdev = `Inter-|   Receive                                               
 docker0:   3000      30    0    0    0     0          0         0     4000      40    0    0    0     0       0          0
 `
 
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func fixture(t *testing.T, withDevices bool) *Reader {
 	t.Helper()
 	root := t.TempDir()
@@ -45,13 +73,7 @@ func fixture(t *testing.T, withDevices bool) *Reader {
 		"proc/net/dev":   netdev,
 	}
 	for path, content := range files {
-		full := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(root, path), content)
 	}
 	dirs := []string{"sys/block/loop0", "sys/block/sda", "sys/block/nvme0n1", "sys/class/net/lo", "sys/class/net/docker0", "sys/class/net/eth0"}
 	if withDevices {
@@ -72,8 +94,9 @@ func TestRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Sample{
-		Time: now,
-		CPU:  CPU{User: 100, Nice: 5, System: 50, Idle: 1000, IOWait: 20, IRQ: 3, SoftIRQ: 2, Steal: 1},
+		Time:      now,
+		CPU:       CPU{User: 100, Nice: 5, System: 50, Idle: 1000, IOWait: 20, IRQ: 3, SoftIRQ: 2, Steal: 1},
+		Processes: Processes{Running: 4, Blocked: 1},
 		Memory: Memory{
 			Total:        16384000 * 1024,
 			Free:         8000000 * 1024,
@@ -81,6 +104,8 @@ func TestRead(t *testing.T) {
 			Buffers:      100000 * 1024,
 			Cached:       3000000 * 1024,
 			SReclaimable: 200000 * 1024,
+			SwapTotal:    2000000 * 1024,
+			SwapFree:     500000 * 1024,
 		},
 		Disks: []Disk{
 			{Name: "sda", ReadOps: 1000, ReadBytes: 20000 * 512, WriteOps: 500, WriteBytes: 8000 * 512},
@@ -107,6 +132,39 @@ func TestReadKeepsVirtualInterfacesWhenNoneHasADevice(t *testing.T) {
 	}
 }
 
+func TestReadSkipsEnslavedInterfaces(t *testing.T) {
+	root := t.TempDir()
+	const netdevVF = `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    5000      50    0    0    0     0          0         0     5000      50    0    0    0     0       0          0
+  eth0: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+enP1s1: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+`
+	if err := os.MkdirAll(filepath.Join(root, "proc", "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "net", "dev"), []byte(netdevVF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"sys/class/net/lo", "sys/class/net/eth0/device", "sys/class/net/enP1s1/device"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../eth0", filepath.Join(root, "sys/class/net/enP1s1/master")); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reader{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys")}
+	got, err := r.netdev()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Interface{{Name: "eth0", RxBytes: 1000000, TxBytes: 200000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("netdev = %+v, want %+v", got, want)
+	}
+}
+
 func TestReadFailsOnMalformedStat(t *testing.T) {
 	r := fixture(t, true)
 	if err := os.WriteFile(filepath.Join(r.Proc, "stat"), []byte("cpu 1 2 x\n"), 0o644); err != nil {
@@ -114,5 +172,166 @@ func TestReadFailsOnMalformedStat(t *testing.T) {
 	}
 	if _, err := r.Read(time.Now()); err == nil {
 		t.Fatal("Read succeeded on a malformed /proc/stat")
+	}
+}
+
+func TestReadFailsOnMalformedProcessCounts(t *testing.T) {
+	r := fixture(t, true)
+	bad := "cpu  100 5 50 1000 20 3 2 1 0 0\nprocs_running x\n"
+	if err := os.WriteFile(filepath.Join(r.Proc, "stat"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Read(time.Now()); err == nil {
+		t.Fatal("Read succeeded on a malformed procs_running line")
+	}
+}
+
+func TestReadWithNoSwap(t *testing.T) {
+	r := fixture(t, true)
+	noSwap := `MemTotal:       16384000 kB
+MemFree:         8000000 kB
+MemAvailable:   12000000 kB
+Buffers:          100000 kB
+Cached:          3000000 kB
+SReclaimable:     200000 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+`
+	if err := os.WriteFile(filepath.Join(r.Proc, "meminfo"), []byte(noSwap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Memory.SwapTotal != 0 || got.Memory.SwapFree != 0 {
+		t.Fatalf("Memory = %+v, want no swap", got.Memory)
+	}
+}
+
+func TestCPUModelReadsModelName(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoX86), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelFallsBackToImplementerAndPartOnArm64(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoArm64), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "0x41 0xd0c"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelEmptyWhenNeitherFieldIsPresent(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte("processor\t: 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("CPUModel = %q, want empty", got)
+	}
+}
+
+func TestReadSkipsFilesystemsOnFailingStatfs(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = filepath.Join(t.TempDir(), "does-not-exist")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Filesystems != nil {
+		t.Fatalf("Filesystems = %+v, want none for a path that fails statfs", got.Filesystems)
+	}
+}
+
+func TestFilesystemsReportsUsage(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = t.TempDir()
+	got := r.filesystems()
+	if len(got) != 1 {
+		t.Fatalf("got %d filesystems, want 1: %+v", len(got), got)
+	}
+	if got[0].Mountpoint != r.Root {
+		t.Errorf("mountpoint = %q, want %q", got[0].Mountpoint, r.Root)
+	}
+	if got[0].UsedBytes == 0 && got[0].FreeBytes == 0 {
+		t.Error("used and free are both 0")
+	}
+}
+
+func TestFilesystemsDedupesTheSameDevice(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = t.TempDir()
+	r.Workspace = filepath.Join(r.Root, "work")
+	if err := os.MkdirAll(r.Workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := r.filesystems()
+	if len(got) != 1 {
+		t.Fatalf("got %d filesystems for the same device, want 1: %+v", len(got), got)
+	}
+}
+
+func TestReadIncludesPressureWhenPresent(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00 total=681245\n")
+	writeFile(t, filepath.Join(r.Proc, "pressure/memory"),
+		"some avg10=2.30 avg60=0.50 avg300=0.00 total=100000\nfull avg10=1.20 avg60=0.10 avg300=0.00 total=50000\n")
+	writeFile(t, filepath.Join(r.Proc, "pressure/io"),
+		"some avg10=10.00 avg60=5.00 avg300=0.00 total=900000\nfull avg10=3.00 avg60=1.00 avg300=0.00 total=300000\n")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	memFull, ioFull := uint64(50000), uint64(300000)
+	want := []Pressure{
+		{Resource: "cpu", Some: 681245},
+		{Resource: "memory", Some: 100000, Full: &memFull},
+		{Resource: "io", Some: 900000, Full: &ioFull},
+	}
+	if !reflect.DeepEqual(got.Pressure, want) {
+		t.Fatalf("Pressure = %+v, want %+v", got.Pressure, want)
+	}
+}
+
+func TestReadSkipsPressureFileThatIsMissing(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00 total=681245\n")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Pressure{{Resource: "cpu", Some: 681245}}
+	if !reflect.DeepEqual(got.Pressure, want) {
+		t.Fatalf("Pressure = %+v, want %+v", got.Pressure, want)
+	}
+}
+
+func TestReadFailsOnMalformedPressure(t *testing.T) {
+	r := fixture(t, true)
+	writeFile(t, filepath.Join(r.Proc, "pressure/cpu"), "some avg10=4.50 avg60=0.91 avg300=0.00\n")
+	if _, err := r.Read(time.Now()); err == nil {
+		t.Fatal("Read succeeded on a malformed /proc/pressure/cpu")
 	}
 }

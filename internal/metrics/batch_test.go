@@ -114,6 +114,9 @@ func TestFlushTagsTheJobAndCountsFromTheFirstSample(t *testing.T) {
 	if got := ms["system.cpu.logical.count"].GetSum().DataPoints[0].GetAsInt(); got != 4 {
 		t.Errorf("cpu count = %d, want 4", got)
 	}
+	if _, ok := ms["system.paging.usage"]; ok {
+		t.Error("system.paging.usage sent with no swap")
+	}
 }
 
 func TestLaterFlushesKeepTheBaseline(t *testing.T) {
@@ -224,5 +227,183 @@ func TestFlushWithNothingQueued(t *testing.T) {
 	data, err := NewBatcher(nil, 1, "dev").Flush()
 	if data != nil || err != nil {
 		t.Fatalf("Flush = %v, %v; want nil, nil", data, err)
+	}
+}
+
+func TestProcessCountIsAGaugePerState(t *testing.T) {
+	b := NewBatcher(nil, 2, "dev")
+	s := sample(100, procfs.CPU{User: 10, Idle: 10}, 0, 0)
+	s.Processes = procfs.Processes{Running: 3, Blocked: 1}
+	b.Add(s)
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.process.count"]
+	if m.Unit != "{process}" {
+		t.Fatalf("unit = %q, want {process}", m.Unit)
+	}
+	if got := point(t, m, "process.state", "running", 100).GetAsInt(); got != 3 {
+		t.Errorf("running = %d, want 3", got)
+	}
+	if got := point(t, m, "process.state", "blocked", 100).GetAsInt(); got != 1 {
+		t.Errorf("blocked = %d, want 1", got)
+	}
+}
+
+func TestFlushReportsPagingUsage(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		Memory: procfs.Memory{Total: 1000, Free: 300, Available: 600, Buffers: 50, Cached: 100, SReclaimable: 50, SwapTotal: 400, SwapFree: 150},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	paging := ms["system.paging.usage"]
+	if paging == nil {
+		t.Fatal("system.paging.usage not sent with swap in use")
+	}
+	if paging.GetSum().IsMonotonic {
+		t.Error("paging usage must not be monotonic")
+	}
+	if got := point(t, paging, "system.paging.state", "used", 100).GetAsInt(); got != 250 {
+		t.Errorf("used swap = %d, want 250", got)
+	}
+	if got := point(t, paging, "system.paging.state", "free", 100).GetAsInt(); got != 150 {
+		t.Errorf("free swap = %d, want 150", got)
+	}
+}
+
+func TestFilesystemUsageHasMountpointAndState(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:        time.Unix(100, 0),
+		Memory:      procfs.Memory{Total: 1000, Free: 300, Available: 600, Buffers: 50, Cached: 100, SReclaimable: 50},
+		Filesystems: []procfs.Filesystem{{Mountpoint: "/", UsedBytes: 2000, FreeBytes: 8000}},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	used := point(t, ms["system.filesystem.usage"], "system.filesystem.state", "used", 100)
+	if used.GetAsInt() != 2000 {
+		t.Errorf("used = %d, want 2000", used.GetAsInt())
+	}
+	free := point(t, ms["system.filesystem.usage"], "system.filesystem.state", "free", 100)
+	if free.GetAsInt() != 8000 {
+		t.Errorf("free = %d, want 8000", free.GetAsInt())
+	}
+	hasMount := false
+	for _, kv := range used.Attributes {
+		if kv.Key == "system.filesystem.mountpoint" && kv.Value.GetStringValue() == "/" {
+			hasMount = true
+		}
+	}
+	if !hasMount {
+		t.Error("used point missing mountpoint attribute")
+	}
+	if ms["system.filesystem.usage"].GetSum().IsMonotonic {
+		t.Error("filesystem usage must not be monotonic")
+	}
+}
+
+func TestNoFilesystemMetricWhenStatfsFailed(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(sample(100, procfs.CPU{Idle: 100}, 0, 0))
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	if _, ok := ms["system.filesystem.usage"]; ok {
+		t.Error("got system.filesystem.usage with no filesystems in the sample")
+	}
+}
+
+func TestFlushIncludesPressureStallTime(t *testing.T) {
+	memFull1, memFull2 := uint64(50), uint64(70)
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:   time.Unix(100, 0),
+		CPU:    procfs.CPU{Idle: 100},
+		Memory: procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{
+			{Resource: "cpu", Some: 500000},
+			{Resource: "memory", Some: 300, Full: &memFull1},
+		},
+	})
+	b.Add(procfs.Sample{
+		Time:   time.Unix(101, 0),
+		CPU:    procfs.CPU{User: 1, Idle: 100},
+		Memory: procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{
+			{Resource: "cpu", Some: 500200},
+			{Resource: "memory", Some: 340, Full: &memFull2},
+		},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.linux.pressure.stall.time"]
+	if m == nil {
+		t.Fatal("no system.linux.pressure.stall.time metric")
+	}
+	if m.Unit != "us" {
+		t.Errorf("unit = %q, want us", m.Unit)
+	}
+	if !m.GetSum().IsMonotonic {
+		t.Error("pressure stall time must be monotonic")
+	}
+	if got := point(t, m, "system.pressure.resource", "cpu", 100).GetAsInt(); got != 0 {
+		t.Errorf("cpu some at first sample = %d, want 0", got)
+	}
+	if got := point(t, m, "system.pressure.resource", "cpu", 101).GetAsInt(); got != 200 {
+		t.Errorf("cpu some at second sample = %d, want 200", got)
+	}
+	if got := point(t, m, "system.pressure.resource", "memory", 101).GetAsInt(); got != 40 {
+		t.Errorf("memory some at second sample = %d, want 40", got)
+	}
+	cpuPoints := 0
+	for _, p := range m.GetSum().DataPoints {
+		for _, kv := range p.Attributes {
+			if kv.Key == "system.pressure.resource" && kv.Value.GetStringValue() == "cpu" {
+				cpuPoints++
+			}
+		}
+	}
+	if cpuPoints != 2 {
+		t.Errorf("cpu has %d pressure points, want 2 (one some per sample, no full)", cpuPoints)
+	}
+}
+
+func TestPressureCounterResetsWhenItGoesBackwards(t *testing.T) {
+	b := NewBatcher(nil, 1, "dev")
+	b.Add(procfs.Sample{
+		Time:     time.Unix(100, 0),
+		CPU:      procfs.CPU{Idle: 100},
+		Memory:   procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{{Resource: "io", Some: 900000}},
+	})
+	b.Add(procfs.Sample{
+		Time:     time.Unix(101, 0),
+		CPU:      procfs.CPU{User: 1, Idle: 100},
+		Memory:   procfs.Memory{Total: 1000},
+		Pressure: []procfs.Pressure{{Resource: "io", Some: 100}},
+	})
+	data, err := b.Flush()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ms := decode(t, data)
+	m := ms["system.linux.pressure.stall.time"]
+	if got := point(t, m, "system.pressure.resource", "io", 101).GetAsInt(); got != 0 {
+		t.Errorf("io some after a backwards counter = %d, want 0 (base reset)", got)
 	}
 }
