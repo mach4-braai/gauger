@@ -56,12 +56,15 @@ type Sample struct {
 	Memory     Memory
 	Disks      []Disk
 	Interfaces []Interface
+	Containers []Container
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
 type Reader struct {
 	Proc string
 	Sys  string
+
+	DockerSocket string
 
 	disks      map[string]bool
 	interfaces map[string]bool
@@ -89,6 +92,7 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	if s.Interfaces, err = r.netdev(); err != nil {
 		return Sample{}, err
 	}
+	s.Containers = r.containers()
 	return s, nil
 }
 
