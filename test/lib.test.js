@@ -1,30 +1,54 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 
-import { artifactName, assetKey, download, readManifest, spooledBatches, summaryTable } from "../src/lib.js";
+import { artifactName, assetKey, download, readManifest, spooledBatches, summaryTable, uploadArtifact } from "../src/lib.js";
 
 const tmp = () => mkdtempSync(path.join(tmpdir(), "gauger-test-"));
 
 const serve = (body, status = 200) => async () => new Response(status === 200 ? body : "nope", { status });
+function fakeRuntimeToken() {
+  const header = Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({ scp: "Actions.Results:11111111-1111-1111-1111-111111111111:22222222-2222-2222-2222-222222222222" }),
+  ).toString("base64url");
+  return `${header}.${payload}.`;
+}
 
 test("download keeps a binary whose sha256 matches and makes it executable", async () => {
   const body = Buffer.from("binary contents");
+  const gz = gzipSync(body);
   const file = path.join(tmp(), "gauger");
-  await download("https://example.test/gauger", createHash("sha256").update(body).digest("hex"), file, serve(body));
+  const bytes = await download("https://example.test/gauger", createHash("sha256").update(gz).digest("hex"), file, serve(gz));
   assert.deepEqual(readFileSync(file), body);
-  assert.equal(statSync(file).mode & 0o777, 0o755);
+  assert.equal(statSync(file).mode & 0o777, 0o700);
+  assert.equal(existsSync(`${file}.tmp`), false);
+  assert.equal(bytes, gz.length);
 });
 
-test("download does not keep a binary whose sha256 does not match", async () => {
+test("download does not keep a binary, or its temp file, whose sha256 does not match", async () => {
   const file = path.join(tmp(), "gauger");
-  await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(Buffer.from("tampered"))), /sha256/);
+  await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(gzipSync(Buffer.from("tampered")))), /sha256/);
   assert.equal(existsSync(file), false);
+});
+
+test("download fails the hash check on a tampered gzip before it decompresses", async () => {
+  const body = Buffer.from("binary contents");
+  const gz = gzipSync(body);
+  const sum = createHash("sha256").update(gz).digest("hex");
+  const tampered = Buffer.from(gz);
+  tampered[tampered.length - 1] ^= 0xff;
+  const file = path.join(tmp(), "gauger");
+  await assert.rejects(download("https://example.test/gauger", sum, file, serve(tampered)), /sha256/);
+  assert.equal(existsSync(file), false);
+  assert.equal(existsSync(`${file}.tmp`), false);
 });
 
 test("download fails on an HTTP error", async () => {
@@ -33,13 +57,14 @@ test("download fails on an HTTP error", async () => {
 
 test("download survives a server that closes the connection after a large body", async () => {
   const body = randomBytes(32 << 20);
+  const gz = gzipSync(body);
   const server = createServer((_req, res) => {
-    res.writeHead(200, { "Content-Length": body.length, Connection: "close" });
-    res.end(body);
+    res.writeHead(200, { "Content-Length": gz.length, Connection: "close" });
+    res.end(gz);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${server.address().port}/gauger`;
-  const sum = createHash("sha256").update(body).digest("hex");
+  const sum = createHash("sha256").update(gz).digest("hex");
   try {
     for (let i = 0; i < 5; i++) {
       const file = path.join(tmp(), "gauger");
@@ -121,4 +146,88 @@ test("summaryTable shows the join time and totals for a healthy run", () => {
   assert.match(table, /\| Joined the tailnet \| 2\.5 s \|/);
   assert.match(table, /\| Disk read \| 5\.0 MiB \|/);
   assert.match(table, /\| Network sent \| 0\.5 MiB \|/);
+});
+
+test("uploadArtifact zips, uploads and finalizes against a fake Twirp server", async () => {
+  const dir = tmp();
+  const spoolDir = path.join(dir, "spool");
+  await mkdir(spoolDir);
+  const batches = {
+    "00000000000000000001.pb": Buffer.from("batch-one"),
+    "00000000000000000002.pb": Buffer.from("batch-two"),
+  };
+  for (const [name, data] of Object.entries(batches)) {
+    writeFileSync(path.join(spoolDir, name), data);
+  }
+  const files = await spooledBatches(spoolDir);
+
+  let uploadedBody = Buffer.alloc(0);
+  const server = createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks);
+      if (req.url.endsWith("/CreateArtifact")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, signed_upload_url: `http://127.0.0.1:${server.address().port}/blob` }));
+      } else if (req.url === "/blob") {
+        uploadedBody = body;
+        res.writeHead(201);
+        res.end();
+      } else if (req.url.endsWith("/FinalizeArtifact")) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, artifact_id: "1" }));
+      } else {
+        res.writeHead(404);
+        res.end();
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  process.env.ACTIONS_RESULTS_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.ACTIONS_RUNTIME_TOKEN = fakeRuntimeToken();
+  try {
+    assert.equal(await uploadArtifact("gauger-test", files, 7), true);
+
+    const zipFile = path.join(dir, "artifact.zip");
+    writeFileSync(zipFile, uploadedBody);
+    const extractDir = path.join(dir, "extract");
+    await mkdir(extractDir);
+    execFileSync("unzip", ["-q", zipFile, "-d", extractDir]);
+    assert.deepEqual(readdirSync(extractDir).sort(), Object.keys(batches).sort());
+    for (const [name, data] of Object.entries(batches)) {
+      assert.deepEqual(readFileSync(path.join(extractDir, name)), data);
+    }
+  } finally {
+    server.close();
+    delete process.env.ACTIONS_RESULTS_URL;
+    delete process.env.ACTIONS_RUNTIME_TOKEN;
+  }
+});
+
+test("uploadArtifact warns instead of throwing when the results service errors", async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(500);
+    res.end("nope");
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const file = path.join(tmp(), "00000000000000000001.pb");
+  writeFileSync(file, "x");
+  process.env.ACTIONS_RESULTS_URL = `http://127.0.0.1:${server.address().port}`;
+  process.env.ACTIONS_RUNTIME_TOKEN = fakeRuntimeToken();
+  const originalWrite = process.stdout.write.bind(process.stdout);
+  let output = "";
+  process.stdout.write = (chunk, ...args) => {
+    output += chunk;
+    return originalWrite(chunk, ...args);
+  };
+  try {
+    assert.equal(await uploadArtifact("gauger-test", [file], 7), false);
+    assert.match(output, /::warning::/);
+  } finally {
+    process.stdout.write = originalWrite;
+    server.close();
+    delete process.env.ACTIONS_RESULTS_URL;
+    delete process.env.ACTIONS_RUNTIME_TOKEN;
+  }
 });
