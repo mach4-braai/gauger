@@ -45,6 +45,12 @@ git rev-list -n1 vX.Y.Z
 
 `docs/contract.md` is the wire contract with gauger-server. `docs/spike.md` records what the spike measured on real runners.
 
+Each release binary carries build provenance attestations. Verify one after downloading it:
+
+```sh
+gh attestation verify gauger-linux-amd64 -R mach4-braai/gauger
+```
+
 ## Development
 
 `mise run check` runs the Go checks, and `mise run e2e` runs the binary against a fake server on Linux. `npm test` tests the action code, which runs straight from `src/` with no dependencies and no build step.
