@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -48,21 +49,29 @@ type Interface struct {
 	RxBytes, TxBytes uint64
 }
 
+type Filesystem struct {
+	Mountpoint           string
+	UsedBytes, FreeBytes uint64
+}
+
 // Sample is one reading of every source.
 type Sample struct {
-	Time       time.Time
-	CPU        CPU
-	Processes  Processes
-	Memory     Memory
-	Disks      []Disk
-	Interfaces []Interface
-	Containers []Container
+	Time        time.Time
+	CPU         CPU
+	Processes   Processes
+	Memory      Memory
+	Disks       []Disk
+	Interfaces  []Interface
+	Filesystems []Filesystem
+	Containers  []Container
 }
 
 // Reader reads samples from a proc and sys tree. Tests point it at fixtures.
 type Reader struct {
-	Proc string
-	Sys  string
+	Proc      string
+	Sys       string
+	Root      string
+	Workspace string
 
 	DockerSocket string
 
@@ -71,12 +80,13 @@ type Reader struct {
 }
 
 // NewReader returns a Reader for the live /proc and /sys.
-func NewReader() *Reader {
-	return &Reader{Proc: "/proc", Sys: "/sys"}
+func NewReader(workspace string) *Reader {
+	return &Reader{Proc: "/proc", Sys: "/sys", Root: "/", Workspace: workspace}
 }
 
-// Read takes one sample. A failure in one source fails the whole sample, so a
-// batch never mixes complete and partial readings.
+// Read takes one sample. A failure in cpu, memory, disk or network fails the
+// whole sample, so a batch never mixes complete and partial readings. A
+// failing statfs only skips filesystem usage.
 func (r *Reader) Read(now time.Time) (Sample, error) {
 	s := Sample{Time: now}
 	var err error
@@ -92,6 +102,7 @@ func (r *Reader) Read(now time.Time) (Sample, error) {
 	if s.Interfaces, err = r.netdev(); err != nil {
 		return Sample{}, err
 	}
+	s.Filesystems = r.filesystems()
 	s.Containers = r.containers()
 	return s, nil
 }
@@ -321,4 +332,36 @@ func (r *Reader) netdev() ([]Interface, error) {
 		return all, nil
 	}
 	return hardware, nil
+}
+
+func (r *Reader) filesystems() []Filesystem {
+	paths := []string{r.Root}
+	if r.Workspace != "" && r.Workspace != r.Root {
+		paths = append(paths, r.Workspace)
+	}
+	var out []Filesystem
+	seen := map[uint64]bool{}
+	for _, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+				dev := uint64(sys.Dev)
+				if seen[dev] {
+					continue
+				}
+				seen[dev] = true
+			}
+		}
+		var sfs syscall.Statfs_t
+		if err := syscall.Statfs(p, &sfs); err != nil {
+			continue
+		}
+		total := uint64(sfs.Bsize) * sfs.Blocks
+		free := uint64(sfs.Bsize) * sfs.Bavail
+		used := uint64(0)
+		if total > free {
+			used = total - free
+		}
+		out = append(out, Filesystem{Mountpoint: p, UsedBytes: used, FreeBytes: free})
+	}
+	return out
 }

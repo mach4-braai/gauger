@@ -95,7 +95,7 @@ func run(o options, logger *log.Logger) Status {
 
 	identity := metrics.IdentityFromEnv(os.Getenv, o.checkRunID)
 	attrs := identity.Attributes()
-	reader := procfs.NewReader()
+	reader := procfs.NewReader(os.Getenv("GITHUB_WORKSPACE"))
 	cpuModel, cpuErr := reader.CPUModel()
 	if cpuErr != nil {
 		logger.Printf("cpu model: %v", cpuErr)

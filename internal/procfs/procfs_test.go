@@ -248,3 +248,43 @@ func TestCPUModelEmptyWhenNeitherFieldIsPresent(t *testing.T) {
 		t.Fatalf("CPUModel = %q, want empty", got)
 	}
 }
+
+func TestReadSkipsFilesystemsOnFailingStatfs(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = filepath.Join(t.TempDir(), "does-not-exist")
+	got, err := r.Read(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Filesystems != nil {
+		t.Fatalf("Filesystems = %+v, want none for a path that fails statfs", got.Filesystems)
+	}
+}
+
+func TestFilesystemsReportsUsage(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = t.TempDir()
+	got := r.filesystems()
+	if len(got) != 1 {
+		t.Fatalf("got %d filesystems, want 1: %+v", len(got), got)
+	}
+	if got[0].Mountpoint != r.Root {
+		t.Errorf("mountpoint = %q, want %q", got[0].Mountpoint, r.Root)
+	}
+	if got[0].UsedBytes == 0 && got[0].FreeBytes == 0 {
+		t.Error("used and free are both 0")
+	}
+}
+
+func TestFilesystemsDedupesTheSameDevice(t *testing.T) {
+	r := fixture(t, true)
+	r.Root = t.TempDir()
+	r.Workspace = filepath.Join(r.Root, "work")
+	if err := os.MkdirAll(r.Workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := r.filesystems()
+	if len(got) != 1 {
+		t.Fatalf("got %d filesystems for the same device, want 1: %+v", len(got), got)
+	}
+}

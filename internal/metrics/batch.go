@@ -151,6 +151,7 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 		diskIO       []*metricspb.NumberDataPoint
 		diskOps      []*metricspb.NumberDataPoint
 		netIO        []*metricspb.NumberDataPoint
+		fsUsage      []*metricspb.NumberDataPoint
 		containerCPU []*metricspb.NumberDataPoint
 		containerMem []*metricspb.NumberDataPoint
 		lastTime     uint64
@@ -204,6 +205,12 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 				b.intPoint(t, int64(n.RxBytes-base.RxBytes), name, stringKV("network.io.direction", "receive")),
 				b.intPoint(t, int64(n.TxBytes-base.TxBytes), name, stringKV("network.io.direction", "transmit")))
 		}
+		for _, fs := range s.Filesystems {
+			mount := stringKV("system.filesystem.mountpoint", fs.Mountpoint)
+			fsUsage = append(fsUsage,
+				b.intPoint(t, int64(fs.UsedBytes), mount, stringKV("system.filesystem.state", "used")),
+				b.intPoint(t, int64(fs.FreeBytes), mount, stringKV("system.filesystem.state", "free")))
+		}
 		for _, cnt := range s.Containers {
 			base := b.baseContainerCPU(cnt)
 			attrs := []*commonpb.KeyValue{stringKV("container.id", cnt.ID)}
@@ -240,6 +247,9 @@ func (b *Batcher) request() *metricspb.ResourceMetrics {
 	}
 	if len(netIO) > 0 {
 		ms = append(ms, counter("system.network.io", "By", netIO))
+	}
+	if len(fsUsage) > 0 {
+		ms = append(ms, upDown("system.filesystem.usage", "By", fsUsage...))
 	}
 	if len(paging) > 0 {
 		ms = append(ms, upDown("system.paging.usage", "By", paging...))
