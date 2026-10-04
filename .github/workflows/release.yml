@@ -49,8 +49,9 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath \
               -ldflags "-s -w -X main.version=$VERSION" \
               -o "out/gauger-linux-$arch" ./cmd/gauger
+            gzip -9 -k "out/gauger-linux-$arch"
           done
-          (cd out && sha256sum gauger-linux-* >checksums.txt && cat checksums.txt)
+          (cd out && sha256sum gauger-linux-*.gz >checksums.txt && cat checksums.txt)
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -64,11 +65,11 @@ jobs:
           sum() { awk -v f="$1" '$2 == f { print $1 }' out/checksums.txt; }
           mkdir -p dist
           jq -n --arg version "$VERSION" --arg base "$BASE_URL" \
-            --arg x64 "$(sum gauger-linux-amd64)" --arg arm64 "$(sum gauger-linux-arm64)" '{
+            --arg x64 "$(sum gauger-linux-amd64.gz)" --arg arm64 "$(sum gauger-linux-arm64.gz)" '{
               version: $version,
               assets: {
-                "linux-x64": { url: "\($base)/gauger-linux-amd64", sha256: $x64 },
-                "linux-arm64": { url: "\($base)/gauger-linux-arm64", sha256: $arm64 }
+                "linux-x64": { url: "\($base)/gauger-linux-amd64.gz", sha256: $x64 },
+                "linux-arm64": { url: "\($base)/gauger-linux-arm64.gz", sha256: $arm64 }
               }
             }' >dist/manifest.json
           cat dist/manifest.json
@@ -88,4 +89,4 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$VERSION" out/gauger-linux-amd64 out/gauger-linux-arm64 out/checksums.txt --verify-tag --title "$VERSION" --generate-notes
+        run: gh release create "$VERSION" out/gauger-linux-amd64.gz out/gauger-linux-arm64.gz out/checksums.txt --verify-tag --title "$VERSION" --generate-notes

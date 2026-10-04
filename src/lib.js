@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { crc32 } from "node:zlib";
+import { crc32, gunzipSync } from "node:zlib";
 
 import * as core from "./actions.js";
 
@@ -36,9 +36,10 @@ export function readManifest(file) {
   return manifest;
 }
 
-// download fetches url into file and fails unless its sha256 matches. The body
-// is read whole: undici asserts and crashes the process when a server closes
-// the connection while a streamed body is paused for backpressure.
+// download fetches a gzipped url, decompresses it into file and fails unless
+// the sha256 of the compressed bytes matches. The body is read whole: undici
+// asserts and crashes the process when a server closes the connection while
+// a streamed body is paused for backpressure.
 export async function download(url, sha256, file, fetchImpl = fetch) {
   const response = await fetchImpl(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
   if (!response.ok) {
@@ -50,13 +51,14 @@ export async function download(url, sha256, file, fetchImpl = fetch) {
     throw new Error(`${url} has sha256 ${actual}, the manifest expects ${sha256}`);
   }
   const tmp = `${file}.tmp`;
-  await writeFile(tmp, data, { mode: 0o700 });
+  await writeFile(tmp, gunzipSync(data), { mode: 0o700 });
   try {
     await rename(tmp, file);
   } catch (error) {
     await rm(tmp, { force: true });
     throw error;
   }
+  return data.length;
 }
 
 // artifactName is the name gauger-server looks for when samples never arrive.

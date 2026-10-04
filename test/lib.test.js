@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
+import { gzipSync } from "node:zlib";
 
 import { artifactName, assetKey, download, readManifest, spooledBatches, uploadArtifact } from "../src/lib.js";
 
@@ -23,16 +24,29 @@ function fakeRuntimeToken() {
 
 test("download keeps a binary whose sha256 matches and makes it executable", async () => {
   const body = Buffer.from("binary contents");
+  const gz = gzipSync(body);
   const file = path.join(tmp(), "gauger");
-  await download("https://example.test/gauger", createHash("sha256").update(body).digest("hex"), file, serve(body));
+  const bytes = await download("https://example.test/gauger", createHash("sha256").update(gz).digest("hex"), file, serve(gz));
   assert.deepEqual(readFileSync(file), body);
   assert.equal(statSync(file).mode & 0o777, 0o700);
   assert.equal(existsSync(`${file}.tmp`), false);
+  assert.equal(bytes, gz.length);
 });
 
 test("download does not keep a binary, or its temp file, whose sha256 does not match", async () => {
   const file = path.join(tmp(), "gauger");
-  await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(Buffer.from("tampered"))), /sha256/);
+  await assert.rejects(download("https://example.test/gauger", "0".repeat(64), file, serve(gzipSync(Buffer.from("tampered")))), /sha256/);
+  assert.equal(existsSync(file), false);
+});
+
+test("download fails the hash check on a tampered gzip before it decompresses", async () => {
+  const body = Buffer.from("binary contents");
+  const gz = gzipSync(body);
+  const sum = createHash("sha256").update(gz).digest("hex");
+  const tampered = Buffer.from(gz);
+  tampered[tampered.length - 1] ^= 0xff;
+  const file = path.join(tmp(), "gauger");
+  await assert.rejects(download("https://example.test/gauger", sum, file, serve(tampered)), /sha256/);
   assert.equal(existsSync(file), false);
   assert.equal(existsSync(`${file}.tmp`), false);
 });
@@ -43,13 +57,14 @@ test("download fails on an HTTP error", async () => {
 
 test("download survives a server that closes the connection after a large body", async () => {
   const body = randomBytes(32 << 20);
+  const gz = gzipSync(body);
   const server = createServer((_req, res) => {
-    res.writeHead(200, { "Content-Length": body.length, Connection: "close" });
-    res.end(body);
+    res.writeHead(200, { "Content-Length": gz.length, Connection: "close" });
+    res.end(gz);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${server.address().port}/gauger`;
-  const sum = createHash("sha256").update(body).digest("hex");
+  const sum = createHash("sha256").update(gz).digest("hex");
   try {
     for (let i = 0; i < 5; i++) {
       const file = path.join(tmp(), "gauger");

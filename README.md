@@ -48,7 +48,7 @@ git rev-list -n1 vX.Y.Z
 Each release binary carries build provenance attestations. Verify one after downloading it:
 
 ```sh
-gh attestation verify gauger-linux-amd64 -R mach4-braai/gauger
+gh attestation verify gauger-linux-amd64.gz -R mach4-braai/gauger
 ```
 
 ## Development
