@@ -233,7 +233,8 @@ func (r *Reader) diskstats() ([]Disk, error) {
 }
 
 // hardware reports whether an interface is backed by a device, which leaves
-// out lo, docker0, veth pairs and other bridges that would count traffic twice.
+// out lo, docker0, veth pairs and other bridges that would count traffic
+// twice. It also leaves out interfaces enslaved to another interface.
 func (r *Reader) hardware(name string) bool {
 	if known, ok := r.interfaces[name]; ok {
 		return known
@@ -242,8 +243,12 @@ func (r *Reader) hardware(name string) bool {
 		r.interfaces = map[string]bool{}
 	}
 	_, err := os.Stat(filepath.Join(r.Sys, "class", "net", name, "device"))
-	r.interfaces[name] = err == nil
-	return err == nil
+	hasDevice := err == nil
+	_, err = os.Lstat(filepath.Join(r.Sys, "class", "net", name, "master"))
+	enslaved := err == nil
+	known := hasDevice && !enslaved
+	r.interfaces[name] = known
+	return known
 }
 
 func (r *Reader) netdev() ([]Interface, error) {
