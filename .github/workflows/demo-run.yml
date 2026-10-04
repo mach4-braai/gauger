@@ -1,0 +1,123 @@
+name: Demo run
+
+# Throwaway run for checking gauger-server's views. Three jobs run in
+# parallel for different lengths, and each step loads one resource so its
+# step window shows a known profile.
+on:
+  push:
+    branches: [test/demo-run]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memory:
+    name: memory (short)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # gauger authenticates to gauger-server with OIDC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
+
+      - uses: ./ # zizmor: ignore[self-repository]
+
+      - name: Hold 2 GiB for 15 s
+        run: python3 -c 'import time; b = b"x" * (2 << 30); time.sleep(15)'
+
+      - name: Hold 8 GiB for 20 s
+        run: python3 -c 'import time; b = b"x" * (8 << 30); time.sleep(20)'
+
+      - name: Idle for 10 s
+        run: sleep 10
+
+  cpu:
+    name: cpu (medium)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # gauger authenticates to gauger-server with OIDC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
+
+      - uses: ./ # zizmor: ignore[self-repository]
+
+      - name: Load every core for 30 s
+        run: |
+          for _ in $(seq "$(nproc)"); do timeout 30 yes >/dev/null & done
+          wait
+
+      - name: Load one core for 20 s
+        run: timeout 20 yes >/dev/null || test $? -eq 124
+
+      - name: Rebuild gauger from scratch
+        run: go build -a -o /dev/null ./cmd/gauger
+
+      - name: Idle for 15 s
+        run: sleep 15
+
+  io:
+    name: io (long)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # gauger authenticates to gauger-server with OIDC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - uses: ./.github/actions/local-release # zizmor: ignore[self-repository]
+
+      - uses: ./ # zizmor: ignore[self-repository]
+
+      - name: Download the Go toolchain three times
+        run: |
+          for _ in 1 2 3; do
+            curl -fsSL -o /dev/null https://dl.google.com/go/go1.25.0.linux-amd64.tar.gz
+          done
+
+      - name: Write and read 2 GiB on disk
+        run: |
+          dd if=/dev/zero of="$RUNNER_TEMP/big.bin" bs=1M count=2048 oflag=direct
+          dd if="$RUNNER_TEMP/big.bin" of=/dev/null bs=1M iflag=direct
+          rm -f "$RUNNER_TEMP/big.bin"
+
+      - name: Fill 3 GiB of the workspace filesystem for 15 s
+        run: |
+          fallocate -l 3G "$GITHUB_WORKSPACE/fill.bin"
+          sleep 15
+          rm -f "$GITHUB_WORKSPACE/fill.bin"
+
+      - name: Grow memory to 6 GiB in 1 GiB steps
+        run: |
+          python3 - <<'EOF'
+          import time
+          held = []
+          for _ in range(6):
+              held.append(b"x" * (1 << 30))
+              time.sleep(5)
+          time.sleep(10)
+          EOF
+
+      - name: Idle for 30 s
+        run: sleep 30
