@@ -1,0 +1,145 @@
+name: Funnel load
+
+# Throwaway load test for mach4-braai/gauger-server#42. Every job runs
+# gauger against the Funnel listener with the same flags, starting at
+# start_at, and logs each request. The push trigger only registers the
+# workflow so it can be dispatched on this branch; it runs no jobs.
+on:
+  push:
+    branches: [loadtest/funnel-throughput]
+  workflow_dispatch:
+    inputs:
+      label:
+        description: Name of this load step
+        required: true
+      start_at:
+        description: UTC time every job starts sampling, such as 2026-10-04T18:30:00Z
+        required: true
+      flush_every:
+        description: gauger -flush-every
+        default: 5s
+      sample_every:
+        description: gauger -sample-every
+        default: 1s
+      duration:
+        description: Seconds of sampling before SIGTERM
+        default: "300"
+      jobs:
+        description: Number of concurrent jobs
+        default: "20"
+
+permissions:
+  contents: read
+
+env:
+  SERVER: https://gauger-server.taila8b8af.ts.net:10000
+
+jobs:
+  plan:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      jobs: ${{ steps.m.outputs.jobs }}
+    steps:
+      - id: m
+        env:
+          JOBS: ${{ inputs.jobs }}
+        run: echo "jobs=$(seq 1 "$JOBS" | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  load:
+    name: load ${{ matrix.job }}
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        job: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    permissions:
+      contents: read
+      id-token: write # gauger authenticates to gauger-server with OIDC
+    env:
+      LABEL: ${{ inputs.label }}
+      START_AT: ${{ inputs.start_at }}
+      FLUSH_EVERY: ${{ inputs.flush_every }}
+      SAMPLE_EVERY: ${{ inputs.sample_every }}
+      DURATION: ${{ inputs.duration }}
+      JOB: ${{ matrix.job }}
+    steps:
+      - name: Check gauger-server health
+        run: |
+          body=$(curl -fsS --max-time 15 "$SERVER/healthz")
+          if [ "$body" != ok ]; then
+            echo "::error::healthz answered '$body'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@7e36c90d9ab29c415a2384db3006f3ec8a8cc654
+
+      - name: Build gauger
+        run: go build -o "$RUNNER_TEMP/gauger" ./cmd/gauger
+
+      - name: Run gauger from start_at for the duration
+        env:
+          CHECK_RUN_ID: ${{ job.check_run_id }}
+        run: |
+          set -eu
+          out="$RUNNER_TEMP/out"
+          state="$RUNNER_TEMP/state"
+          mkdir -p "$out" "$state"
+          wait_s=$(( $(date -u -d "$START_AT" +%s) - $(date -u +%s) ))
+          late_s=0
+          if [ "$wait_s" -gt 0 ]; then
+            sleep "$wait_s"
+          else
+            late_s=$(( -wait_s ))
+            echo "::warning::started ${late_s} s after start_at"
+          fi
+          "$RUNNER_TEMP/gauger" -state-dir "$state" -no-tailnet -server "$SERVER" \
+            -check-run-id "$CHECK_RUN_ID" -flush-every "$FLUSH_EVERY" -sample-every "$SAMPLE_EVERY" \
+            -request-log "$out/requests.jsonl" 2> "$out/gauger.log" &
+          pid=$!
+          sleep "$DURATION"
+          kill -TERM "$pid"
+          wait "$pid" || echo "::warning::gauger exited with $?"
+          cp "$state/status.json" "$out/"
+          jq -n --arg label "$LABEL" --arg start_at "$START_AT" --arg flush "$FLUSH_EVERY" \
+            --arg sample "$SAMPLE_EVERY" --argjson job "$JOB" --argjson late "$late_s" \
+            --arg runner "$RUNNER_NAME" --argjson cpus "$(nproc)" \
+            '{label: $label, start_at: $start_at, flush_every: $flush, sample_every: $sample,
+              job: $job, late_s: $late, runner: $runner, cpus: $cpus}' > "$out/meta.json"
+          cat "$out/status.json"
+          jq -e '.done_sent' "$out/status.json" > /dev/null
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: load-${{ matrix.job }}
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  report:
+    needs: [plan, load]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: load-*
+          path: results
+
+      - name: Aggregate
+        run: python3 loadtest/aggregate.py results --json summary.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: summary
+          path: summary.json
+          retention-days: 7

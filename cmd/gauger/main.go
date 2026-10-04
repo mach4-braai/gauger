@@ -46,6 +46,7 @@ type options struct {
 	flushEvery    time.Duration
 	finalBudget   time.Duration
 	verbose       bool
+	requestLog    string
 }
 
 // Status is the file post.js reads after gauger exits.
@@ -71,6 +72,7 @@ func main() {
 	flag.DurationVar(&o.flushEvery, "flush-every", 5*time.Second, "batch interval")
 	flag.DurationVar(&o.finalBudget, "final-budget", 20*time.Second, "time from SIGTERM to the end of the final upload")
 	flag.BoolVar(&o.verbose, "verbose", false, "log tsnet's own messages")
+	flag.StringVar(&o.requestLog, "request-log", "", "append one JSON line per request to this file (load test)")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -108,8 +110,22 @@ func run(o options, logger *log.Logger) Status {
 		return status
 	}
 	tokens, tokenErr := oidc.FromEnv(os.Getenv, o.oidcAudience)
+	var reqs *reqLog
+	if o.requestLog != "" {
+		if reqs, err = openReqLog(o.requestLog); err != nil {
+			logger.Printf("request log: %v", err)
+		} else {
+			defer reqs.Close()
+		}
+	}
 	client := func(hc *http.Client, server string) agent.Uploader {
 		hc.Timeout = requestTimeout
+		if reqs != nil {
+			if hc.Transport != nil {
+				reqs.base = hc.Transport
+			}
+			hc.Transport = reqs
+		}
 		return &upload.Client{BaseURL: server, HTTP: hc, Tokens: tokens}
 	}
 
