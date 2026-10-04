@@ -48,8 +48,6 @@ async function main() {
     "-state-dir", stateDir,
     "-server", core.getInput("server"),
     "-check-run-id", checkRunId,
-    "-ts-client-id", core.getInput("tailscale-client-id"),
-    "-ts-audience", core.getInput("tailscale-audience"),
   ];
   const log = openSync(path.join(dir, "gauger.log"), "a");
   const child = spawn(binary, args, { detached: true, stdio: ["ignore", log, log], env: launchEnv() });

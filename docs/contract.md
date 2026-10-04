@@ -4,19 +4,20 @@ gauger and [gauger-server](https://github.com/mach4-braai/gauger-server) share t
 
 ## Transport
 
-- gauger joins the tailnet as an ephemeral `tag:gauger-ci` node and sends HTTP to `http://gauger-server:4318`. The ACL lets `tag:gauger-ci` reach only `tag:gauger-server:4318`.
-- gauger calls `envknob.SetNoLogsNoSupport()` before constructing the `tsnet.Server`, so tsnet never uploads its own logs to `log.tailscale.com`.
-- Every request carries `Authorization: Bearer <GitHub OIDC JWT>` with `aud` `gauger-server`. gauger fetches a new token at least 60 s before `exp`, so one job sends several tokens.
+- gauger sends HTTPS to gauger-server's public runner listener, `https://<host>.<tailnet>.ts.net:10000`, a Tailscale Funnel port. The action's default is `https://gauger-server.taila8b8af.ts.net:10000`. gauger does not join the tailnet.
+- Every request carries `Authorization: Bearer <GitHub OIDC JWT>` with `aud` `gauger-server`, and the token is the only credential. gauger fetches a new token at least 60 s before `exp`, so one job sends several tokens.
+- The identity attributes in every body must name the job the token was issued to: its `repository`, `run_id`, `run_attempt` and `check_run_id` claims. A mismatch gets `403`.
+- A job or client address over its rate gets `429` with `Retry-After`.
 
 ## Endpoints
 
 | Method and path | Body | When |
 |---|---|---|
-| `POST /v1/jobs/start` | JSON lifecycle | Once, after the node joins. `time` is when sampling started, which can be earlier than the request. |
+| `POST /v1/jobs/start` | JSON lifecycle | Once, when gauger starts. `time` is when sampling started, which can be earlier than the request. |
 | `POST /v1/metrics` | OTLP/HTTP `ExportMetricsServiceRequest`, `Content-Type: application/x-protobuf` | One batch every 5 s, oldest first. Batches buffered while offline arrive late and in order. |
 | `POST /v1/jobs/done` | JSON lifecycle | Once, after the final flush in the post step. |
 
-gauger treats any 2xx as accepted. It retries 401, 403, 408, 429, 5xx (including the server's `503` for a job it does not know yet) and network errors on the next flush. It drops a batch the server rejects with another 4xx.
+gauger treats any 2xx as accepted. It retries 401, 403, 408, 429, 5xx (including the server's `503` for a job it does not know yet) and network errors on the next flush, without reading `Retry-After`. It drops a batch the server rejects with another 4xx.
 
 ### Lifecycle body
 

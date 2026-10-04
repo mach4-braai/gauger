@@ -248,7 +248,6 @@ export function summaryTable(status) {
     ["Network sent", mib(peaks.network_tx_bytes)],
     ["Batches sent", `${status.sent_batches ?? 0}`],
     ["Batches unsent", `${status.unsent_batches ?? 0}`],
-    ["Joined the tailnet", status.join_ms ? `${(status.join_ms / 1000).toFixed(1)} s` : "no"],
   ];
   return ["| Metric | Value |", "| --- | --- |", ...rows.map(([key, value]) => `| ${key} | ${value} |`)].join("\n");
 }

@@ -24,7 +24,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
-      id-token: write # gauger joins the tailnet and authenticates with OIDC
+      id-token: write # gauger authenticates to gauger-server with OIDC
     env:
       MODE: ${{ matrix.mode }}
       OS: ${{ matrix.os }}
@@ -41,7 +41,7 @@ jobs:
         if: matrix.mode == 'gauger'
         uses: ./ # zizmor: ignore[self-repository]
         with:
-          server: http://gauger-server-absent:4318
+          server: https://gauger-server-absent.invalid
 
       - name: Build gauger from scratch three times
         run: |

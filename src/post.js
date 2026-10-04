@@ -33,8 +33,7 @@ function report(statusFile) {
   for (const warning of status.warnings ?? []) {
     core.warning(warning);
   }
-  const joined = status.join_ms ? `joined the tailnet in ${(status.join_ms / 1000).toFixed(1)} s, ` : "";
-  core.info(`gauger ${status.version}: ${joined}sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
+  core.info(`gauger ${status.version}: sent ${status.sent_batches} batches, ${status.unsent_batches} unsent.`);
   core.appendSummary(`### gauger ${status.version}\n\n${summaryTable(status)}\n`);
 }
 
