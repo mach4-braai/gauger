@@ -19,5 +19,5 @@ inputs:
     default: http://gauger-server:4318
 runs:
   using: node24
-  main: dist/main/index.js
-  post: dist/post/index.js
+  main: src/main.js
+  post: src/post.js

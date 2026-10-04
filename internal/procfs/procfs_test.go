@@ -24,6 +24,20 @@ SwapTotal:       2000000 kB
 SwapFree:         500000 kB
 `
 
+const cpuinfoX86 = `processor	: 0
+vendor_id	: GenuineIntel
+model name	: Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz
+`
+
+const cpuinfoArm64 = `processor	: 0
+BogoMIPS	: 50.00
+CPU implementer	: 0x41
+CPU architecture: 8
+CPU variant	: 0x3
+CPU part	: 0xd0c
+CPU revision	: 1
+`
+
 const diskstats = `   7       0 loop0 90 0 1800 10 0 0 0 0 0 20 10 0 0 0 0 0 0
    8       0 sda 1000 10 20000 300 500 20 8000 400 0 700 700 0 0 0 0 0 0
    8       1 sda1 900 10 18000 290 480 20 7900 390 0 690 680 0 0 0 0 0 0
@@ -111,6 +125,39 @@ func TestReadKeepsVirtualInterfacesWhenNoneHasADevice(t *testing.T) {
 	}
 }
 
+func TestReadSkipsEnslavedInterfaces(t *testing.T) {
+	root := t.TempDir()
+	const netdevVF = `Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    5000      50    0    0    0     0          0         0     5000      50    0    0    0     0       0          0
+  eth0: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+enP1s1: 1000000    800    0    0    0     0          0         0   200000     600    0    0    0     0       0          0
+`
+	if err := os.MkdirAll(filepath.Join(root, "proc", "net"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "proc", "net", "dev"), []byte(netdevVF), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"sys/class/net/lo", "sys/class/net/eth0/device", "sys/class/net/enP1s1/device"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../eth0", filepath.Join(root, "sys/class/net/enP1s1/master")); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reader{Proc: filepath.Join(root, "proc"), Sys: filepath.Join(root, "sys")}
+	got, err := r.netdev()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Interface{{Name: "eth0", RxBytes: 1000000, TxBytes: 200000}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("netdev = %+v, want %+v", got, want)
+	}
+}
+
 func TestReadFailsOnMalformedStat(t *testing.T) {
 	r := fixture(t, true)
 	if err := os.WriteFile(filepath.Join(r.Proc, "stat"), []byte("cpu 1 2 x\n"), 0o644); err != nil {
@@ -141,5 +188,49 @@ SwapFree:              0 kB
 	}
 	if got.Memory.SwapTotal != 0 || got.Memory.SwapFree != 0 {
 		t.Fatalf("Memory = %+v, want no swap", got.Memory)
+	}
+}
+
+func TestCPUModelReadsModelName(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoX86), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelFallsBackToImplementerAndPartOnArm64(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte(cpuinfoArm64), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "0x41 0xd0c"
+	if got != want {
+		t.Fatalf("CPUModel = %q, want %q", got, want)
+	}
+}
+
+func TestCPUModelEmptyWhenNeitherFieldIsPresent(t *testing.T) {
+	r := fixture(t, true)
+	if err := os.WriteFile(filepath.Join(r.Proc, "cpuinfo"), []byte("processor\t: 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.CPUModel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
+		t.Fatalf("CPUModel = %q, want empty", got)
 	}
 }
